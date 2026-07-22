@@ -45,11 +45,13 @@
             <a class="nav-item {% if request.url.path.startswith('/charts') %}active{% endif %}" href="/charts">Графики</a>
             <a class="nav-item {% if request.url.path.startswith('/history') %}active{% endif %}" href="/history">История</a>
             <a class="nav-item {% if request.url.path.startswith('/station') %}active{% endif %}" href="/station">Состояние станции</a>
-            {% if admin_enabled %}
-            <a class="nav-item {% if request.url.path.startswith('/admin') %}active{% endif %}" href="/admin/settings">Админка</a>
-            {% endif %}
         </nav>
         <div class="topbar-right">
+            {% if admin_enabled %}
+            <a class="icon-btn" href="/admin/settings" title="Админка" aria-label="Админка">
+                <i class="ti ti-settings"></i>
+            </a>
+            {% endif %}
             <button id="theme-toggle" type="button" class="icon-btn" title="Переключить тему" aria-label="Переключить тему">
                 <i class="ti ti-sun"></i>
             </button>

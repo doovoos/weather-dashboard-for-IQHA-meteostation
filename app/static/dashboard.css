@@ -144,6 +144,7 @@ a { color: inherit; }
   display: inline-flex;
   align-items: center;
   justify-content: center;
+  text-decoration: none;
 }
 .icon-btn:hover { border-color: var(--border-strong); }
 
