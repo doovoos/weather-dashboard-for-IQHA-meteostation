@@ -52,15 +52,7 @@
         <strong>Строк к импорту:</strong> {{ preview.total_rows }}
         {% if preview.skipped_count > 0 %}
           <span class="muted"> (пропущено: {{ preview.skipped_count }})</span>
-        {% endif %}<br>
-        <strong>Заголовки CSV ({{ preview.columns_found|length }}):</strong>
-        {% for col in preview.columns_found %}
-          <span class="mono">"{{ col }}"</span>{% if not loop.last %}, {% endif %}
-        {% endfor %}<br>
-        <strong>Data columns ({{ preview.data_columns|length }}):</strong>
-        {% for col in preview.data_columns %}
-          <span class="mono">"{{ col }}"</span>{% if not loop.last %}, {% endif %}
-        {% endfor %}
+        {% endif %}
       </div>
     </div>
 

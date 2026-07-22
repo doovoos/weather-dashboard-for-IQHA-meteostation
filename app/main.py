@@ -569,7 +569,6 @@ async def admin_import_post(
 
     # Все колонки для отображения (исключая служебные)
     data_columns = [c for c in parse_result.columns_found if c not in ("UNIXTIME", "Дата", "Время")]
-    logger.info("CSV import debug: columns_found={!r}, data_columns={!r}", parse_result.columns_found, data_columns)
 
     return render_template(
         request,
