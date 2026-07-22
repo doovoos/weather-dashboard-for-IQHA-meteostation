@@ -6,12 +6,17 @@
   T5;Температура
 
 Маппинг колонок → sensor_id:
-  Температура   → T1
-  T5            → T5
-  Давление      → PRESS
-  Влажность     → RH
-  VOLT          → VOLT
-  Точка росы    → DEW
+  Температура         → T1
+  T5                  → T5
+  Ощущаем темп-ру     → T6
+  Давление            → PRESS
+  Влажность           → RH
+  VOLT                → VOLT
+  Точка росы          → DEW
+  Абс. влажность      → 1
+  Дефиц давл пара     → VPD
+  Коэф смешивания     → MIX_RATIO
+  Плотн воздха        → AIR_D
 """
 from __future__ import annotations
 
@@ -32,10 +37,15 @@ from .sensor_map import sensor_label, sensor_unit
 _CSV_COLUMN_TO_SENSOR_ID: dict[str, str] = {
     "Температура": "T1",
     "T5": "T5",
+    "Ощущаем темп-ру": "T6",
     "Давление": "PRESS",
     "Влажность": "RH",
     "VOLT": "VOLT",
     "Точка росы": "DEW",
+    "Абс. влажность": "1",
+    "Дефиц давл пара": "VPD",
+    "Коэф смешивания": "MIX_RATIO",
+    "Плотн воздха": "AIR_D",
 }
 
 

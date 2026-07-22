@@ -15,6 +15,7 @@ SENSOR_MAP: dict[str, SensorMeta] = {
     "T3": SensorMeta("Температура (SHT3x)", "°C"),
     "T4": SensorMeta("Температура (BME680)", "°C"),
     "T5": SensorMeta("Температура чипа", "°C"),
+    "T6": SensorMeta("Ощущаемая температура", "°C"),
     "DEW": SensorMeta("Точка росы", "°C"),
     "1": SensorMeta("Абсолютная влажность", "г/м³"),
     "RH": SensorMeta("Влажность", "%"),
@@ -38,6 +39,9 @@ SENSOR_MAP: dict[str, SensorMeta] = {
     "L2": SensorMeta("Освещенность (BH1750)", "лк"),
     "L3": SensorMeta("Освещенность (LTR390)", "лк"),
     "UV1": SensorMeta("УФ-индекс", "UV"),
+    "VPD": SensorMeta("Дефицит давления пара", "кПа"),
+    "MIX_RATIO": SensorMeta("Коэффициент смешивания", "г/кг"),
+    "AIR_D": SensorMeta("Плотность воздуха", "кг/м³"),
 }
 
 

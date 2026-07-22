@@ -39,6 +39,11 @@ def test_parse_csv_basic():
     assert row.readings["VOLT"] == 12.15
     assert row.readings["DEW"] == 17.43
     assert row.readings["T5"] == 47.78
+    assert row.readings["T6"] == 19.98       # Ощущаемая температура
+    assert row.readings["1"] == 14.84       # Абс. влажность
+    assert row.readings["AIR_D"] == 1.2      # Плотность воздуха
+    assert row.readings["MIX_RATIO"] == 12.47  # Коэф смешивания
+    assert row.readings["VPD"] == 0.0        # Дефиц давл пара
 
 
 def test_parse_csv_skips_empty_rows():
