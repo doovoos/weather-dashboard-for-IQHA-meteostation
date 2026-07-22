@@ -98,6 +98,8 @@ def env_settings_dict() -> dict[str, str]:
         "WEATHER_PLACE_NAME",
         "WEATHER_SITE_URL",
         "YANDEX_METRIKA_ID",
+        "WEATHER_TIMEZONE",
+        "TIME_FORMAT",
         "TELEGRAM_ADMIN_IDS",
         "TELEGRAM_DAILY_USER_IDS",
         "TELEGRAM_DAILY_TIMES",
@@ -107,6 +109,10 @@ def env_settings_dict() -> dict[str, str]:
         "TELEGRAM_DYNAMIC_NAME_PREFIX",
         "TELEGRAM_DYNAMIC_NAME_INTERVAL_MINUTES",
         "AUTO_REGISTER_STATIONS",
+        "LOGGING_ENABLED",
+        "LOGGING_LEVEL",
+        "LOGGING_MAX_SIZE_MB",
+        "LOGGING_BACKUP_COUNT",
     )
     overrides: dict[str, str] = {}
     for key in keys:

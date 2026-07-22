@@ -10,6 +10,8 @@
             const theme = localStorage.getItem("theme") || "light";
             document.documentElement.setAttribute("data-bs-theme", theme);
         })();
+        // Global time format setting from server
+        window.APP_TIME_FORMAT = "{{ time_format }}";
     </script>
     <link rel="preconnect" href="https://fonts.googleapis.com">
     <link rel="preconnect" href="https://fonts.gstatic.com" crossorigin>

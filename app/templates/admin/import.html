@@ -1,0 +1,102 @@
+{% extends "admin/_layout.html" %}
+{% block admin_title %}Импорт данных{% endblock %}
+{% block admin_heading %}Импорт данных{% endblock %}
+{% block admin_sub %}Загрузите CSV-файл (экспорт narodmon.ru) для восстановления пропущенных показаний. Дубликаты (уже существующие batch-и) будут пропущены автоматически.{% endblock %}
+
+{% block admin_content %}
+{# ---------- Upload form ---------- #}
+<div class="card mb-16">
+  <div class="card-head">
+    <div class="card-title">Загрузка CSV-файла</div>
+  </div>
+  <form method="post" action="/admin/import" enctype="multipart/form-data" class="form-grid">
+    <input type="hidden" name="action" value="preview">
+    <div class="form-row">
+      <label class="form-label" for="import-station"><span class="form-label-text">Станция</span></label>
+      <div class="form-input-wrap">
+        <select id="import-station" class="input" name="device_mac" required>
+          <option value="">— выберите станцию —</option>
+          {% for s in stations %}
+            <option value="{{ s.mac }}">{{ s.name }} ({{ s.mac }})</option>
+          {% endfor %}
+        </select>
+      </div>
+    </div>
+    <div class="form-row">
+      <label class="form-label" for="import-file"><span class="form-label-text">CSV-файл</span></label>
+      <div class="form-input-wrap">
+        <input id="import-file" class="input" type="file" name="file" accept=".csv,.txt" required>
+        <div class="form-help">Формат: разделитель <span class="mono">;</span>, первая строка — заголовки. Поддерживаются кодировки UTF-8 и Windows-1251.</div>
+      </div>
+    </div>
+    <div class="form-actions">
+      <button type="submit" class="btn btn-primary">Загрузить и предпросмотр</button>
+    </div>
+  </form>
+</div>
+
+{# ---------- Preview ---------- #}
+{% if preview %}
+<div class="card mb-16">
+  <div class="card-head">
+    <div class="card-title">Предпросмотр данных</div>
+  </div>
+  <div class="form-grid" style="padding: 16px;">
+    <div class="muted small">
+      <strong>Файл:</strong> <span class="mono">{{ preview.filename }}</span><br>
+      <strong>Станция:</strong> {{ preview.station_name }} <span class="mono">({{ preview.station_mac }})</span><br>
+      <strong>Строк к импорту:</strong> {{ preview.total_rows }}
+      {% if preview.skipped_count > 0 %}
+        <span class="muted"> (пропущено: {{ preview.skipped_count }})</span>
+      {% endif %}<br>
+      <strong>Распознанные колонки:</strong>
+      {% for col in preview.columns_mapped %}
+        <span class="mono">{{ col }}</span>{% if not loop.last %}, {% endif %}
+      {% endfor %}
+    </div>
+  </div>
+
+  <div class="table-wrap">
+    <table class="data-table">
+      <thead>
+        <tr>
+          <th>Время (локальное)</th>
+          {% for sid in preview.columns_mapped %}
+            <th class="mono">{{ sid }}</th>
+          {% endfor %}
+        </tr>
+      </thead>
+      <tbody>
+        {% for row in preview.rows %}
+        <tr>
+          <td class="mono small">{{ row.time }}</td>
+          {% for col_sid in preview.columns_mapped %}
+            <td class="mono small">
+              {% for r in row.readings %}
+                {% if r.sensor_id == col_sid %}{{ r.value }}{% endif %}
+              {% endfor %}
+            </td>
+          {% endfor %}
+        </tr>
+        {% endfor %}
+      </tbody>
+    </table>
+  </div>
+
+  {% if preview.truncated %}
+  <div class="muted small" style="padding: 8px 16px;">
+    Показаны первые 50 из {{ preview.total_rows }} строк.
+  </div>
+  {% endif %}
+
+  <div class="form-actions" style="padding: 16px;">
+    <form method="post" action="/admin/import">
+      <input type="hidden" name="action" value="import">
+      <input type="hidden" name="preview_token" value="{{ preview.token }}">
+      <button type="submit" class="btn btn-primary" onclick="return confirm('Импортировать {{ preview.total_rows }} записей для станции {{ preview.station_mac }}?')">Импортировать</button>
+      <a href="/admin/import" class="btn">Отмена</a>
+    </form>
+  </div>
+</div>
+{% endif %}
+{% endblock %}

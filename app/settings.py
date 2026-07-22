@@ -44,6 +44,10 @@ SETTINGS_SCHEMA: tuple[SettingDef, ...] = (
                "Полный URL сайта — используется в Telegram-кнопках."),
     SettingDef("YANDEX_METRIKA_ID", "ID Яндекс.Метрики", "string", "", "Общие",
                "Только цифры. Пусто — Метрика отключена."),
+    SettingDef("WEATHER_TIMEZONE", "Часовой пояс", "string", "UTC", "Общие",
+               "Часовой пояс для отображения времени: UTC, Asia/Omsk, Europe/Moscow и т.д."),
+    SettingDef("TIME_FORMAT", "Формат времени", "string", "24h", "Общие",
+               "24h — 24-часовой формат (14:30), 12h — 12-часовой (2:30 PM)."),
 
     # ----- Telegram -----
     SettingDef("TELEGRAM_ADMIN_IDS", "ID админов в Telegram", "csv_int", "", "Telegram",
@@ -67,6 +71,24 @@ SETTINGS_SCHEMA: tuple[SettingDef, ...] = (
     SettingDef("AUTO_REGISTER_STATIONS", "Автоматически регистрировать новые станции", "bool", "0", "Станции",
                "Если включено — неизвестный mac создаёт запись (disabled). "
                "Иначе ingest от незарегистрированной станции отклоняется."),
+
+    # ----- Логирование -----
+    SettingDef("LOGGING_ENABLED", "Включить логирование в файл", "bool", "1", "Логирование",
+               "Если выключено — логи пишутся только в консоль (stderr)."),
+    SettingDef("LOGGING_LEVEL", "Уровень логирования", "string", "INFO", "Логирование",
+               "DEBUG, INFO, WARNING, ERROR, CRITICAL. Чем выше уровень, тем меньше сообщений."),
+    SettingDef("LOGGING_MAX_SIZE_MB", "Максимальный размер файла (МБ)", "int", "10", "Логирование",
+               "При достижении этого размера создаётся новый файл. Старые файлы удаляются согласно LOGGING_BACKUP_COUNT."),
+    SettingDef("LOGGING_BACKUP_COUNT", "Количество файлов в архиве", "int", "5", "Логирование",
+               "Сколько rotated-файлов хранить (например, 5 файлов по 10 МБ = максимум 50 МБ логов)."),
+
+    # ----- Агрегация -----
+    SettingDef("AGGREGATION_MAX_AGE_DAYS", "Порог агрегации (дни)", "int", "45", "Агрегация",
+               "Данные старше этого порога (в днях) будут агрегированы из 5-минутных в часовые средние."),
+    SettingDef("AGGREGATION_INTERVAL_DAYS", "Интервал агрегации (дни)", "int", "10", "Агрегация",
+               "Как часто запускать автоматическую агрегацию старых данных."),
+    SettingDef("AGGREGATION_LAST_RUN_AT", "", "string", "", "Агрегация",
+               ""),
 )
 
 
@@ -204,6 +226,17 @@ def set_value(key: str, value: str, conn: sqlite3.Connection | None = None) -> N
             (key, value, now),
         )
     _invalidate_cache()
+    # Refresh timezone if it changed
+    if key == "WEATHER_TIMEZONE":
+        from .db import refresh_local_tz
+        refresh_local_tz()
+    # Reconfigure logging if logging settings changed
+    if key.startswith("LOGGING_"):
+        from .logging_setup import reconfigure_logging
+        import sys
+        # Determine service name from command line
+        service_name = "bot" if "bot.py" in sys.argv[0] else "web"
+        reconfigure_logging(service_name)
 
 
 def set_many(values: dict[str, str], conn: sqlite3.Connection | None = None) -> None:
@@ -223,6 +256,16 @@ def set_many(values: dict[str, str], conn: sqlite3.Connection | None = None) -> 
                 (key, value, now),
             )
     _invalidate_cache()
+    # Refresh timezone if it changed
+    if "WEATHER_TIMEZONE" in values:
+        from .db import refresh_local_tz
+        refresh_local_tz()
+    # Reconfigure logging if logging settings changed
+    if any(key.startswith("LOGGING_") for key in values):
+        from .logging_setup import reconfigure_logging
+        import sys
+        service_name = "bot" if "bot.py" in sys.argv[0] else "web"
+        reconfigure_logging(service_name)
 
 
 # ---------- Seeding ----------

@@ -12,6 +12,7 @@
       <div class="seg">
         <a class="seg-btn {% if request.url.path.startswith('/admin/settings') %}active{% endif %}" href="/admin/settings">Настройки</a>
         <a class="seg-btn {% if request.url.path.startswith('/admin/stations') %}active{% endif %}" href="/admin/stations">Станции</a>
+        <a class="seg-btn {% if request.url.path.startswith('/admin/import') %}active{% endif %}" href="/admin/import">Импорт</a>
       </div>
     </div>
   </header>

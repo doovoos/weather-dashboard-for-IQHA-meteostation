@@ -17,10 +17,21 @@ from app.config import (
 from app.db import format_telegram_snapshot, get_latest_snapshot, init_db, parse_timestamp
 from app.logging_setup import setup_logging
 
-try:
-    APP_TZ = ZoneInfo(WEATHER_TIMEZONE)
-except ZoneInfoNotFoundError:
-    APP_TZ = UTC
+# Lazy timezone resolution: try to get from DB settings, fallback to env
+def _get_app_tz() -> ZoneInfo:
+    """Get timezone from DB settings if available, otherwise use env default."""
+    try:
+        tz_name = settings.get_string("WEATHER_TIMEZONE")
+        if tz_name:
+            return ZoneInfo(tz_name)
+    except Exception:
+        pass  # DB not ready yet or settings not seeded
+    try:
+        return ZoneInfo(WEATHER_TIMEZONE)
+    except ZoneInfoNotFoundError:
+        return UTC
+
+APP_TZ = _get_app_tz()
 
 WEATHER_BUTTON = "Погода сейчас"
 
@@ -194,6 +205,36 @@ async def dynamic_bot_name_loop(app: Application) -> None:
         await asyncio.sleep(interval_minutes * 60)
 
 
+async def aggregation_loop() -> None:
+    """Фоновая задача: проверяет и запускает агрегацию старых данных."""
+    from app.aggregation import run_aggregation_if_needed
+    from app.db import get_connection
+
+    logger.info("Aggregation monitor started")
+    # При старте ждём 5 минут, чтобы не мешать другим задачам
+    await asyncio.sleep(5 * 60)
+
+    while True:
+        try:
+            with get_connection() as conn:
+                result = run_aggregation_if_needed(conn)
+            if result is not None:
+                if result.error:
+                    logger.error("Aggregation run failed: {}", result.error)
+                else:
+                    logger.info(
+                        "Aggregation run: deleted {}/{} batches/rows, created {}/{} batches/rows",
+                        result.deleted_batches, result.deleted_rows,
+                        result.created_batches, result.created_rows,
+                    )
+        except Exception:
+            logger.exception("Aggregation loop error")
+
+        # Проверяем раз в 6 часов (сам цикл run_aggregation_if_needed
+        # решает, запускать ли агрегацию по AGGREGATION_INTERVAL_DAYS)
+        await asyncio.sleep(6 * 60 * 60)
+
+
 def build_app() -> Application:
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("Set TELEGRAM_BOT_TOKEN before starting the bot.")
@@ -207,9 +248,9 @@ def build_app() -> Application:
 
 
 async def main() -> None:
-    setup_logging("bot")
     init_db()
     inserted = settings.seed_defaults_if_empty(env_settings_dict())
+    setup_logging("bot")  # Call after DB init and seeding
     if inserted:
         logger.info("Seeded {} app_settings rows from env defaults", inserted)
     logger.info("Bot service started")
@@ -221,13 +262,15 @@ async def main() -> None:
     monitor_task = asyncio.create_task(stale_data_monitor_loop(application))
     broadcast_task = asyncio.create_task(daily_weather_broadcast_loop(application))
     dynamic_name_task = asyncio.create_task(dynamic_bot_name_loop(application))
+    aggregation_task = asyncio.create_task(aggregation_loop())
     try:
         await asyncio.Event().wait()
     finally:
         monitor_task.cancel()
         broadcast_task.cancel()
         dynamic_name_task.cancel()
-        await asyncio.gather(monitor_task, broadcast_task, dynamic_name_task, return_exceptions=True)
+        aggregation_task.cancel()
+        await asyncio.gather(monitor_task, broadcast_task, dynamic_name_task, aggregation_task, return_exceptions=True)
         await application.updater.stop()
         await application.stop()
         await application.shutdown()

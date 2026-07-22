@@ -13,10 +13,28 @@ from .config import DATABASE_PATH, WEATHER_TIMEZONE
 from .migrations import run_migrations
 from .sensor_map import PRIMARY_SENSOR_IDS, sensor_label, sensor_unit
 
-try:
-    LOCAL_TZ = ZoneInfo(WEATHER_TIMEZONE)
-except ZoneInfoNotFoundError:
-    LOCAL_TZ = UTC
+# Lazy timezone resolution: try to get from DB settings, fallback to env
+def _get_local_tz() -> ZoneInfo:
+    """Get timezone from DB settings if available, otherwise use env default."""
+    try:
+        from .settings import get_string
+        tz_name = get_string("WEATHER_TIMEZONE")
+        if tz_name:
+            return ZoneInfo(tz_name)
+    except Exception:
+        pass  # DB not ready yet or settings not seeded
+    try:
+        return ZoneInfo(WEATHER_TIMEZONE)
+    except ZoneInfoNotFoundError:
+        return UTC
+
+LOCAL_TZ = _get_local_tz()
+
+
+def refresh_local_tz() -> None:
+    """Refresh LOCAL_TZ after settings change."""
+    global LOCAL_TZ
+    LOCAL_TZ = _get_local_tz()
 
 
 TEMPERATURE_SENSOR_IDS = ("T1", "T2", "T3", "T4", "T5", "T6")
@@ -405,6 +423,13 @@ def _value_by_ids(reading_lookup: dict[str, dict[str, Any]], ids: tuple[str, ...
 
 
 def get_history_for_date(target_date: str, conn: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
+    # Parse target_date as a local date, then convert to UTC bounds for the query
+    try:
+        target_day = date.fromisoformat(target_date)
+    except ValueError:
+        return []
+    start_utc, end_utc = _local_day_bounds(target_day)
+
     with use_connection(conn) as connection:
         rows = connection.execute(
             """
@@ -418,10 +443,10 @@ def get_history_for_date(target_date: str, conn: sqlite3.Connection | None = Non
                 o.unit
             FROM ingest_batches AS b
             JOIN observations AS o ON o.batch_id = b.id
-            WHERE date(b.received_at) = date(?)
-            ORDER BY b.received_at DESC, o.sensor_name ASC
+            WHERE b.received_at >= ? AND b.received_at < ?
+            ORDER BY b.received_at ASC, o.sensor_name ASC
             """,
-            (target_date,),
+            (start_utc, end_utc),
         ).fetchall()
 
     grouped: dict[int, dict[str, Any]] = {}
@@ -447,6 +472,14 @@ def get_history_for_date(target_date: str, conn: sqlite3.Connection | None = Non
     result: list[dict[str, Any]] = []
     core_ids = {"T1", "T2", "T3", "T4", "T5", "T6", "RH", "H1", "H2", "PRESS", "HPA"}
 
+    # Get time format from settings
+    try:
+        from . import settings as _settings
+        time_format = _settings.get_string("TIME_FORMAT").strip().lower()
+    except Exception:
+        time_format = "24h"
+    time_fmt = "%H:%M:%S" if time_format == "24h" else "%I:%M:%S %p"
+
     for item in grouped.values():
         reading_lookup = {reading["sensor_id"]: reading for reading in item["readings"]}
         local_dt = to_local_timestamp(item["received_at"])
@@ -461,7 +494,7 @@ def get_history_for_date(target_date: str, conn: sqlite3.Connection | None = Non
             {
                 **item,
                 "date": local_dt.strftime("%Y-%m-%d"),
-                "time": local_dt.strftime("%H:%M:%S"),
+                "time": local_dt.strftime(time_fmt),
                 "temperature": _value_by_ids(reading_lookup, TEMPERATURE_SENSOR_IDS),
                 "humidity": _value_by_ids(reading_lookup, HUMIDITY_SENSOR_IDS),
                 "pressure": _value_by_ids(reading_lookup, PRESSURE_SENSOR_IDS),
@@ -573,10 +606,17 @@ def get_today_extremes(
         if not row:
             return None
         local_time = to_local_timestamp(row["observed_at"])
+        # Get time format from settings
+        try:
+            from . import settings as _settings
+            time_format = _settings.get_string("TIME_FORMAT").strip().lower()
+        except Exception:
+            time_format = "24h"
+        time_str = local_time.strftime("%H:%M" if time_format == "24h" else "%I:%M %p")
         return {
             "value": row["value"],
             "unit": row["unit"] or default_unit,
-            "time": local_time.strftime("%H:%M"),
+            "time": time_str,
             "datetime_local": local_time.strftime("%Y-%m-%d %H:%M:%S"),
         }
 

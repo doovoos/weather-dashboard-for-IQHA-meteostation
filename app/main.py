@@ -9,13 +9,13 @@ import hmac
 import json
 import sqlite3
 
-from fastapi import Depends, FastAPI, Form, HTTPException, Request
+from fastapi import Depends, FastAPI, Form, HTTPException, Request, UploadFile
 from fastapi.responses import HTMLResponse, JSONResponse, RedirectResponse, Response
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from loguru import logger
 
-from . import settings, stations as stations_repo
+from . import csv_import, settings, stations as stations_repo
 from .auth import admin_enabled, require_admin
 from .config import (
     INGEST_MAX_BODY_BYTES,
@@ -61,21 +61,36 @@ from .schemas import (
 app = FastAPI(title="Weather Station", version="1.2.0")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
-try:
-    APP_TZ = ZoneInfo(WEATHER_TIMEZONE)
-except ZoneInfoNotFoundError:
-    APP_TZ = UTC
+
+# Lazy timezone resolution: try to get from DB settings, fallback to env
+def _get_app_tz() -> ZoneInfo:
+    """Get timezone from DB settings if available, otherwise use env default."""
+    try:
+        tz_name = settings.get_string("WEATHER_TIMEZONE")
+        if tz_name:
+            return ZoneInfo(tz_name)
+    except Exception:
+        pass  # DB not ready yet or settings not seeded
+    try:
+        return ZoneInfo(WEATHER_TIMEZONE)
+    except ZoneInfoNotFoundError:
+        return UTC
+
+APP_TZ = _get_app_tz()
 
 
 def _site_globals() -> dict[str, Any]:
     """Текущие user-facing значения для шаблонов. Читаются из app_settings."""
     yandex_id = settings.get_string("YANDEX_METRIKA_ID").strip()
+    time_format = settings.get_string("TIME_FORMAT").strip().lower()
     return {
         "app_title": settings.get_string("APP_TITLE"),
         "site_brand": settings.get_string("SITE_BRAND"),
         "yandex_metrika_id": yandex_id,
         "yandex_metrika_enabled": bool(yandex_id),
         "admin_enabled": admin_enabled(),
+        "time_format": time_format if time_format in ("12h", "24h") else "24h",
+        "weather_timezone": settings.get_string("WEATHER_TIMEZONE"),
     }
 
 
@@ -91,9 +106,9 @@ def render_template(request: Request, template_name: str, context: dict[str, Any
 
 @app.on_event("startup")
 def on_startup() -> None:
-    setup_logging("web")
     init_db()
     inserted = settings.seed_defaults_if_empty(env_settings_dict())
+    setup_logging("web")  # Call after DB init and seeding
     if inserted:
         logger.info("Seeded {} app_settings rows from env defaults", inserted)
     logger.info("Web service started")
@@ -363,6 +378,189 @@ async def admin_stations_post(
         return RedirectResponse(url="/admin/stations?saved=error", status_code=303)
 
     return RedirectResponse(url="/admin/stations", status_code=303)
+
+
+# ---------- CSV Import (admin) ----------
+
+# In-memory store for preview data between GET→POST cycle.
+# Key: preview token (str), Value: dict with parsed rows and metadata.
+_preview_store: dict[str, dict[str, Any]] = {}
+_PREVIEW_MAX_ENTRIES = 20
+
+
+def _store_preview(data: dict[str, Any]) -> str:
+    """Store preview data, evict oldest if over limit. Returns token."""
+    import uuid
+    if len(_preview_store) >= _PREVIEW_MAX_ENTRIES:
+        oldest_key = next(iter(_preview_store))
+        del _preview_store[oldest_key]
+    token = uuid.uuid4().hex[:12]
+    _preview_store[token] = data
+    return token
+
+
+@app.get("/admin/import", response_class=HTMLResponse)
+def admin_import_get(
+    request: Request,
+    imported: str | None = None,
+    _: str = Depends(require_admin),
+    conn: sqlite3.Connection = Depends(db_dependency),
+) -> HTMLResponse:
+    flash = None
+    if imported == "ok":
+        flash = {"tone": "good", "text": "Данные успешно импортированы."}
+    elif imported == "empty":
+        flash = {"tone": "warn", "text": "CSV-файл не содержит данных для импорта."}
+    elif imported == "error":
+        flash = {"tone": "bad", "text": "Ошибка при импорте — проверьте файл."}
+    return render_template(
+        request,
+        "admin/import.html",
+        {
+            "stations": stations_repo.list_stations(conn=conn),
+            "flash": flash,
+            "preview": None,
+        },
+    )
+
+
+@app.post("/admin/import", response_class=HTMLResponse)
+async def admin_import_post(
+    request: Request,
+    _: str = Depends(require_admin),
+    conn: sqlite3.Connection = Depends(db_dependency),
+) -> HTMLResponse:
+    form = await request.form()
+    action = str(form.get("action") or "").strip()
+
+    # --- Action: import (from preview) ---
+    if action == "import":
+        token = str(form.get("preview_token") or "").strip()
+        preview_data = _preview_store.pop(token, None)
+        if not preview_data:
+            return render_template(
+                request, "admin/import.html",
+                {
+                    "stations": stations_repo.list_stations(conn=conn),
+                    "flash": {"tone": "bad", "text": "Данные предпросмотра устарели. Загрузите файл заново."},
+                    "preview": None,
+                },
+            )
+        rows = preview_data["rows"]
+        device_mac = preview_data["device_mac"]
+        if not rows:
+            return RedirectResponse(url="/admin/import?imported=empty", status_code=303)
+        result = csv_import.save_csv_import(rows, device_mac, conn=conn)
+        logger.info(
+            "CSV import: mac={}, inserted_batches={}, inserted_rows={}, skipped={}",
+            device_mac, result.inserted_batches, result.inserted_rows, result.skipped_batches,
+        )
+        return RedirectResponse(url="/admin/import?imported=ok", status_code=303)
+
+    # --- Action: preview (file upload) ---
+    upload: UploadFile | None = form.get("file")  # type: ignore[assignment]
+    device_mac = str(form.get("device_mac") or "").strip()
+    if not upload or not upload.filename:
+        return render_template(
+            request, "admin/import.html",
+            {
+                "stations": stations_repo.list_stations(conn=conn),
+                "flash": {"tone": "bad", "text": "Выберите CSV-файл для загрузки."},
+                "preview": None,
+            },
+        )
+    if not device_mac:
+        return render_template(
+            request, "admin/import.html",
+            {
+                "stations": stations_repo.list_stations(conn=conn),
+                "flash": {"tone": "bad", "text": "Выберите станцию для импорта."},
+                "preview": None,
+            },
+        )
+
+    raw_bytes = await upload.read()
+    try:
+        text = raw_bytes.decode("utf-8-sig")
+    except UnicodeDecodeError:
+        try:
+            text = raw_bytes.decode("cp1251")
+        except UnicodeDecodeError:
+            return render_template(
+                request, "admin/import.html",
+                {
+                    "stations": stations_repo.list_stations(conn=conn),
+                    "flash": {"tone": "bad", "text": "Не удалось прочитать файл: неверная кодировка."},
+                    "preview": None,
+                },
+            )
+
+    parse_result = csv_import.parse_csv(text)
+    if parse_result.error:
+        return render_template(
+            request, "admin/import.html",
+            {
+                "stations": stations_repo.list_stations(conn=conn),
+                "flash": {"tone": "bad", "text": parse_result.error},
+                "preview": None,
+            },
+        )
+    if not parse_result.rows:
+        return render_template(
+            request, "admin/import.html",
+            {
+                "stations": stations_repo.list_stations(conn=conn),
+                "flash": {"tone": "warn", "text": "CSV-файл не содержит валидных строк для импорта."},
+                "preview": None,
+            },
+        )
+
+    # Store preview data and render preview page
+    token = _store_preview({
+        "rows": parse_result.rows,
+        "device_mac": device_mac,
+    })
+
+    # Build preview rows for template (limit to first 50)
+    from .db import to_local_timestamp
+    preview_rows = []
+    for row in parse_result.rows[:50]:
+        try:
+            local_dt = to_local_timestamp(row.observed_at)
+            time_str = local_dt.strftime("%Y-%m-%d %H:%M:%S")
+        except Exception:
+            time_str = row.observed_at
+        preview_rows.append({
+            "time": time_str,
+            "readings": [
+                {"sensor_id": sid, "value": val}
+                for sid, val in sorted(row.readings.items())
+            ],
+        })
+
+    station = stations_repo.get_by_mac(device_mac, conn=conn)
+    station_name = station["name"] if station else device_mac
+
+    return render_template(
+        request,
+        "admin/import.html",
+        {
+            "stations": stations_repo.list_stations(conn=conn),
+            "flash": None,
+            "preview": {
+                "token": token,
+                "filename": upload.filename,
+                "station_mac": device_mac,
+                "station_name": station_name,
+                "total_rows": len(parse_result.rows),
+                "skipped_count": len(parse_result.skipped_rows),
+                "columns_found": parse_result.columns_found,
+                "columns_mapped": parse_result.columns_mapped,
+                "rows": preview_rows,
+                "truncated": len(parse_result.rows) > 50,
+            },
+        },
+    )
 
 
 @app.get("/api/current", response_model=CurrentResponse)

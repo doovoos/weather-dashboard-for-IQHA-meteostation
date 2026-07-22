@@ -117,6 +117,11 @@ function createChart(elementId, datasets) {
   const filtered = datasets.filter(Boolean);
   if (!target || !filtered.length) return false;
 
+  // Use global time format setting
+  const is24h = (window.APP_TIME_FORMAT || "24h") === "24h";
+  const hourFormat = is24h ? "HH:mm" : "h:mm a";
+  const dayFormat = is24h ? "dd.MM" : "MM/dd";
+
   const chart = new Chart(target, {
     type: "line",
     data: { datasets: filtered },
@@ -125,7 +130,22 @@ function createChart(elementId, datasets) {
       maintainAspectRatio: false,
       interaction: { mode: "index", intersect: false },
       scales: {
-        x: { type: "time", time: { tooltipFormat: "yyyy-MM-dd HH:mm" }, ticks: { color: axisColor() }, grid: { color: gridColor() } },
+        x: {
+          type: "time",
+          time: {
+            tooltipFormat: is24h ? "yyyy-MM-dd HH:mm" : "yyyy-MM-dd h:mm a",
+            displayFormats: {
+              hour: hourFormat,
+              day: dayFormat,
+              minute: hourFormat
+            }
+          },
+          ticks: {
+            color: axisColor(),
+            hour12: !is24h
+          },
+          grid: { color: gridColor() }
+        },
         y: { ticks: { color: axisColor() }, grid: { color: gridColor() } }
       },
       plugins: {
