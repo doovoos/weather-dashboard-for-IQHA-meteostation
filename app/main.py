@@ -448,6 +448,19 @@ async def admin_import_post(
             )
         rows = preview_data["rows"]
         device_mac = preview_data["device_mac"]
+
+        # Читаем пользовательский маппинг из формы: mapping_<csv_col> = sensor_id
+        custom_mapping: dict[str, str] = {}
+        for key, value in form.multi_items():
+            if key.startswith("mapping_"):
+                csv_col = key[len("mapping_"):]
+                sensor_id = str(value).strip()
+                if csv_col and sensor_id:
+                    custom_mapping[csv_col] = sensor_id
+
+        if custom_mapping:
+            rows = csv_import.remap_rows(rows, custom_mapping)
+
         if not rows:
             return RedirectResponse(url="/admin/import?imported=empty", status_code=303)
         result = csv_import.save_csv_import(rows, device_mac, conn=conn)
@@ -541,6 +554,22 @@ async def admin_import_post(
     station = stations_repo.get_by_mac(device_mac, conn=conn)
     station_name = station["name"] if station else device_mac
 
+    # Маппинг CSV-колонка → sensor_id для шаблона предпросмотра
+    # Включаем ВСЕ колонки из CSV, а не только авто-распознанные
+    auto_mapping = csv_import._CSV_COLUMN_TO_SENSOR_ID
+    col_to_sensor = {}
+    for col in parse_result.columns_found:
+        if col in ("UNIXTIME", "Дата", "Время"):
+            continue
+        col_to_sensor[col] = auto_mapping.get(col, "")
+
+    # Все доступные sensor_id для выпадающих списков
+    from .sensor_map import SENSOR_MAP
+    available_sensors = sorted(SENSOR_MAP.keys())
+
+    # Все колонки для отображения (исключая служебные)
+    data_columns = [c for c in parse_result.columns_found if c not in ("UNIXTIME", "Дата", "Время")]
+
     return render_template(
         request,
         "admin/import.html",
@@ -556,6 +585,9 @@ async def admin_import_post(
                 "skipped_count": len(parse_result.skipped_rows),
                 "columns_found": parse_result.columns_found,
                 "columns_mapped": parse_result.columns_mapped,
+                "col_to_sensor": col_to_sensor,
+                "available_sensors": available_sensors,
+                "data_columns": data_columns,
                 "rows": preview_rows,
                 "truncated": len(parse_result.rows) > 50,
             },

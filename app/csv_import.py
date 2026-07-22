@@ -55,6 +55,7 @@ class CsvRow:
     unixtime: int
     observed_at: str  # ISO-8601 UTC
     readings: dict[str, float] = field(default_factory=dict)
+    raw_values: dict[str, float] = field(default_factory=dict)  # {csv_col_name: value}
 
 
 @dataclass
@@ -106,11 +107,13 @@ def parse_csv(text: str) -> CsvParseResult:
 
             observed_at = datetime.fromtimestamp(unixtime, tz=UTC).isoformat()
 
-            # Маппим колонки на sensor_id
-            readings: dict[str, float] = {}
+            # Собираем все числовые значения из колонок
+            raw_values: dict[str, float] = {}
             header_to_index = {h: i for i, h in enumerate(headers)}
 
-            for csv_col, sensor_id in _CSV_COLUMN_TO_SENSOR_ID.items():
+            for csv_col in headers:
+                if csv_col in ("UNIXTIME", "Дата", "Время"):
+                    continue
                 col_idx = header_to_index.get(csv_col)
                 if col_idx is None or col_idx >= len(row):
                     continue
@@ -118,24 +121,62 @@ def parse_csv(text: str) -> CsvParseResult:
                 if not raw_value:
                     continue
                 try:
-                    readings[sensor_id] = float(raw_value)
+                    raw_values[csv_col] = float(raw_value)
                 except ValueError:
                     continue
 
-            if not readings:
+            if not raw_values:
                 result.skipped_rows.append(line_number)
                 continue
+
+            # Авто-маппинг на sensor_id
+            readings: dict[str, float] = {}
+            for csv_col, sensor_id in _CSV_COLUMN_TO_SENSOR_ID.items():
+                if csv_col in raw_values:
+                    readings[sensor_id] = raw_values[csv_col]
 
             result.rows.append(CsvRow(
                 unixtime=unixtime,
                 observed_at=observed_at,
                 readings=readings,
+                raw_values=raw_values,
             ))
 
     except Exception as exc:
         result.error = f"Ошибка парсинга CSV: {exc}"
 
     return result
+
+
+def remap_rows(
+    rows: list[CsvRow],
+    custom_mapping: dict[str, str],
+) -> list[CsvRow]:
+    """Пересобирает readings из raw_values по пользовательскому маппингу.
+
+    custom_mapping: {csv_column_name: sensor_id}
+    Колонки, замапленные в "", пропускаются.
+    """
+    if not custom_mapping:
+        return rows
+
+    remapped: list[CsvRow] = []
+    for row in rows:
+        new_readings: dict[str, float] = {}
+        for csv_col, sensor_id in custom_mapping.items():
+            if not sensor_id:
+                continue
+            value = row.raw_values.get(csv_col)
+            if value is not None:
+                new_readings[sensor_id] = value
+        if new_readings:
+            remapped.append(CsvRow(
+                unixtime=row.unixtime,
+                observed_at=row.observed_at,
+                readings=new_readings,
+                raw_values=row.raw_values,
+            ))
+    return remapped
 
 
 def build_ingest_payload(

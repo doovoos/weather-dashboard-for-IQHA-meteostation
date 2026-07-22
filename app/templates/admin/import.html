@@ -37,66 +37,101 @@
 
 {# ---------- Preview ---------- #}
 {% if preview %}
-<div class="card mb-16">
-  <div class="card-head">
-    <div class="card-title">Предпросмотр данных</div>
-  </div>
-  <div class="form-grid" style="padding: 16px;">
-    <div class="muted small">
-      <strong>Файл:</strong> <span class="mono">{{ preview.filename }}</span><br>
-      <strong>Станция:</strong> {{ preview.station_name }} <span class="mono">({{ preview.station_mac }})</span><br>
-      <strong>Строк к импорту:</strong> {{ preview.total_rows }}
-      {% if preview.skipped_count > 0 %}
-        <span class="muted"> (пропущено: {{ preview.skipped_count }})</span>
-      {% endif %}<br>
-      <strong>Распознанные колонки:</strong>
-      {% for col in preview.columns_mapped %}
-        <span class="mono">{{ col }}</span>{% if not loop.last %}, {% endif %}
-      {% endfor %}
+<form method="post" action="/admin/import">
+  <input type="hidden" name="action" value="import">
+  <input type="hidden" name="preview_token" value="{{ preview.token }}">
+
+  <div class="card mb-16">
+    <div class="card-head">
+      <div class="card-title">Предпросмотр данных</div>
     </div>
-  </div>
+    <div style="padding: 16px;">
+      <div class="muted small">
+        <strong>Файл:</strong> <span class="mono">{{ preview.filename }}</span><br>
+        <strong>Станция:</strong> {{ preview.station_name }} <span class="mono">({{ preview.station_mac }})</span><br>
+        <strong>Строк к импорту:</strong> {{ preview.total_rows }}
+        {% if preview.skipped_count > 0 %}
+          <span class="muted"> (пропущено: {{ preview.skipped_count }})</span>
+        {% endif %}
+      </div>
+    </div>
 
-  <div class="table-wrap">
-    <table class="data-table">
-      <thead>
-        <tr>
-          <th>Время (локальное)</th>
-          {% for sid in preview.columns_mapped %}
-            <th class="mono">{{ sid }}</th>
+    {# ---------- Mapping configuration ---------- #}
+    <div class="card-head" style="padding: 0 16px;">
+      <div class="card-title">Сопоставление колонок</div>
+    </div>
+    <div class="form-grid" style="padding: 0 16px 16px;">
+      {% for col_name in preview.data_columns %}
+      <div class="form-row" style="grid-template-columns: 200px 1fr; align-items: center;">
+        <label class="form-label" style="margin: 0;">
+          <span class="form-label-text mono">{{ col_name }}</span>
+        </label>
+        <div class="form-input-wrap">
+          <select class="input mono" name="mapping_{{ col_name }}">
+            <option value="">— пропустить —</option>
+            {% for sid in preview.available_sensors %}
+              <option value="{{ sid }}" {% if preview.col_to_sensor[col_name] == sid %}selected{% endif %}>
+                {{ sid }}
+              </option>
+            {% endfor %}
+          </select>
+        </div>
+      </div>
+      {% endfor %}
+      {% if not preview.data_columns %}
+      <div class="muted small">Не найдено колонок с данными в CSV-файле.</div>
+      {% endif %}
+    </div>
+
+    {# ---------- Data preview table ---------- #}
+    <div class="table-wrap">
+      <table class="data-table">
+        <thead>
+          <tr>
+            <th>Время (локальное)</th>
+            {% for col_name in preview.data_columns %}
+              <th class="mono">
+                {{ col_name }}
+                {% if preview.col_to_sensor[col_name] %}
+                  → <span class="small">{{ preview.col_to_sensor[col_name] }}</span>
+                {% endif %}
+              </th>
+            {% endfor %}
+          </tr>
+        </thead>
+        <tbody>
+          {% for row in preview.rows %}
+          <tr>
+            <td class="mono small">{{ row.time }}</td>
+            {% for col_name in preview.data_columns %}
+              <td class="mono small">
+                {% set sid = preview.col_to_sensor[col_name] %}
+                {% if sid %}
+                  {% for r in row.readings %}
+                    {% if r.sensor_id == sid %}{{ r.value }}{% endif %}
+                  {% endfor %}
+                {% else %}
+                  <span class="muted">—</span>
+                {% endif %}
+              </td>
+            {% endfor %}
+          </tr>
           {% endfor %}
-        </tr>
-      </thead>
-      <tbody>
-        {% for row in preview.rows %}
-        <tr>
-          <td class="mono small">{{ row.time }}</td>
-          {% for col_sid in preview.columns_mapped %}
-            <td class="mono small">
-              {% for r in row.readings %}
-                {% if r.sensor_id == col_sid %}{{ r.value }}{% endif %}
-              {% endfor %}
-            </td>
-          {% endfor %}
-        </tr>
-        {% endfor %}
-      </tbody>
-    </table>
-  </div>
+        </tbody>
+      </table>
+    </div>
 
-  {% if preview.truncated %}
-  <div class="muted small" style="padding: 8px 16px;">
-    Показаны первые 50 из {{ preview.total_rows }} строк.
-  </div>
-  {% endif %}
+    {% if preview.truncated %}
+    <div class="muted small" style="padding: 8px 16px;">
+      Показаны первые 50 из {{ preview.total_rows }} строк.
+    </div>
+    {% endif %}
 
-  <div class="form-actions" style="padding: 16px;">
-    <form method="post" action="/admin/import">
-      <input type="hidden" name="action" value="import">
-      <input type="hidden" name="preview_token" value="{{ preview.token }}">
+    <div class="form-actions" style="padding: 16px;">
       <button type="submit" class="btn btn-primary" onclick="return confirm('Импортировать {{ preview.total_rows }} записей для станции {{ preview.station_mac }}?')">Импортировать</button>
       <a href="/admin/import" class="btn">Отмена</a>
-    </form>
+    </div>
   </div>
-</div>
+</form>
 {% endif %}
 {% endblock %}

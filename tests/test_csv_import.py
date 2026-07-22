@@ -66,7 +66,11 @@ UNIXTIME;Дата;Время;Неизвестная колонка
 """
     result = parse_csv(csv_text)
     assert result.error is None
-    assert len(result.rows) == 0  # no mappable sensors → row skipped
+    # Row is NOT skipped — raw_values stores all numeric columns
+    assert len(result.rows) == 1
+    assert result.rows[0].raw_values.get("Неизвестная колонка") == 42.0
+    # But readings is empty (no auto-mapped sensors)
+    assert len(result.rows[0].readings) == 0
     assert "Неизвестная колонка" not in result.columns_mapped
 
 
