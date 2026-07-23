@@ -155,7 +155,7 @@ RestartSec=3
 WantedBy=multi-user.target
 ```
 
-Если нужен бот, создайте `/etc/systemd/system/weather-bot.service`:
+Если нужен Telegram-бот (опционально — для уведомлений, рассылки погоды, алертов), создайте `/etc/systemd/system/weather-bot.service`:
 
 ```ini
 [Unit]
@@ -180,10 +180,14 @@ WantedBy=multi-user.target
 ```bash
 sudo systemctl daemon-reload
 sudo systemctl enable --now weather-web
-sudo systemctl enable --now weather-bot
 sudo systemctl status weather-web --no-pager
-sudo systemctl status weather-bot --no-pager
+
+# Telegram-бот (опционально, только если создан weather-bot.service):
+# sudo systemctl enable --now weather-bot
+# sudo systemctl status weather-bot --no-pager
 ```
+
+> **Примечание:** Веб-сервер (`weather-web`) — обязательный компонент. Он обслуживает дашборд, API, импорт CSV и фоновую агрегацию данных. Telegram-бот (`weather-bot`) — опционален и нужен только для уведомлений и рассылки погоды.
 
 ## 4) Что настроить в `.env`
 
@@ -275,17 +279,14 @@ deactivate
 
 ### Перезапуск сервисов после изменения кода
 
-После любых изменений в `.py`-файлах или шаблонах нужно перезапустить соответствующие сервисы:
+После любых изменений в `.py`-файлах или шаблонах нужно перезапустить веб-сервер:
 
 ```bash
-# Перезапуск веб-сервера (после изменений в app/*.py, шаблонах, CSS)
+# Перезапуск веб-сервера (обязательно после изменений в app/*.py, шаблонах, CSS)
 sudo systemctl restart weather-web
 
-# Перезапуск Telegram-бота (после изменений в bot.py)
+# Перезапуск Telegram-бота (если используется, после изменений в bot.py)
 sudo systemctl restart weather-bot
-
-# Перезапуск обоих сразу
-sudo systemctl restart weather-web weather-bot
 ```
 
 ### Проверка статуса и логов
@@ -308,6 +309,6 @@ sudo journalctl -u weather-web -n 50 --no-pager
 ```bash
 cd /opt/weather-dashboard
 git pull origin main
-sudo systemctl restart weather-web weather-bot
-sudo systemctl status weather-web weather-bot --no-pager
+sudo systemctl restart weather-web
+sudo systemctl status weather-web --no-pager
 ```

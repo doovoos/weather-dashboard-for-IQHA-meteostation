@@ -105,13 +105,43 @@ def render_template(request: Request, template_name: str, context: dict[str, Any
 
 
 @app.on_event("startup")
-def on_startup() -> None:
+async def on_startup() -> None:
+    import asyncio
     init_db()
     inserted = settings.seed_defaults_if_empty(env_settings_dict())
     setup_logging("web")  # Call after DB init and seeding
     if inserted:
         logger.info("Seeded {} app_settings rows from env defaults", inserted)
     logger.info("Web service started")
+    asyncio.create_task(_aggregation_loop())
+
+
+async def _aggregation_loop() -> None:
+    """Фоновая задача агрегации старых данных (работает в веб-сервере)."""
+    import asyncio
+    from .aggregation import run_aggregation_if_needed
+    from .db import get_connection
+
+    logger.info("Aggregation monitor started")
+    await asyncio.sleep(5 * 60)
+
+    while True:
+        try:
+            with get_connection() as conn:
+                result = run_aggregation_if_needed(conn)
+            if result is not None:
+                if result.error:
+                    logger.error("Aggregation run failed: {}", result.error)
+                else:
+                    logger.info(
+                        "Aggregation run: deleted {}/{} batches/rows, created {}/{} batches/rows",
+                        result.deleted_batches, result.deleted_rows,
+                        result.created_batches, result.created_rows,
+                    )
+        except Exception:
+            logger.exception("Aggregation loop error")
+
+        await asyncio.sleep(6 * 60 * 60)
 
 
 @app.middleware("http")

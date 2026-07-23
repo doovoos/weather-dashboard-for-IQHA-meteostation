@@ -205,36 +205,6 @@ async def dynamic_bot_name_loop(app: Application) -> None:
         await asyncio.sleep(interval_minutes * 60)
 
 
-async def aggregation_loop() -> None:
-    """Фоновая задача: проверяет и запускает агрегацию старых данных."""
-    from app.aggregation import run_aggregation_if_needed
-    from app.db import get_connection
-
-    logger.info("Aggregation monitor started")
-    # При старте ждём 5 минут, чтобы не мешать другим задачам
-    await asyncio.sleep(5 * 60)
-
-    while True:
-        try:
-            with get_connection() as conn:
-                result = run_aggregation_if_needed(conn)
-            if result is not None:
-                if result.error:
-                    logger.error("Aggregation run failed: {}", result.error)
-                else:
-                    logger.info(
-                        "Aggregation run: deleted {}/{} batches/rows, created {}/{} batches/rows",
-                        result.deleted_batches, result.deleted_rows,
-                        result.created_batches, result.created_rows,
-                    )
-        except Exception:
-            logger.exception("Aggregation loop error")
-
-        # Проверяем раз в 6 часов (сам цикл run_aggregation_if_needed
-        # решает, запускать ли агрегацию по AGGREGATION_INTERVAL_DAYS)
-        await asyncio.sleep(6 * 60 * 60)
-
-
 def build_app() -> Application:
     if not TELEGRAM_BOT_TOKEN:
         raise RuntimeError("Set TELEGRAM_BOT_TOKEN before starting the bot.")
@@ -262,15 +232,13 @@ async def main() -> None:
     monitor_task = asyncio.create_task(stale_data_monitor_loop(application))
     broadcast_task = asyncio.create_task(daily_weather_broadcast_loop(application))
     dynamic_name_task = asyncio.create_task(dynamic_bot_name_loop(application))
-    aggregation_task = asyncio.create_task(aggregation_loop())
     try:
         await asyncio.Event().wait()
     finally:
         monitor_task.cancel()
         broadcast_task.cancel()
         dynamic_name_task.cancel()
-        aggregation_task.cancel()
-        await asyncio.gather(monitor_task, broadcast_task, dynamic_name_task, aggregation_task, return_exceptions=True)
+        await asyncio.gather(monitor_task, broadcast_task, dynamic_name_task, return_exceptions=True)
         await application.updater.stop()
         await application.stop()
         await application.shutdown()

@@ -46,8 +46,8 @@ curl http://127.0.0.1:18080/api/current
 
 Two long-running processes share one SQLite file (`WEATHER_DB_PATH`):
 
-- **Web** ([app/main.py](app/main.py)) — FastAPI app. Calls `init_db()` on startup, mounts `/static`, renders Jinja2 templates from [app/templates/](app/templates/), and exposes both HTML pages (`/`, `/charts`, `/history`, `/station`, `/admin/settings`, `/admin/stations`, `/admin/import`) and JSON APIs (`/api/ingest`, `/api/current`, `/api/chart-data`, `/api/uptime`, `/api/comfort-risk`, `/api/period-comparison`, `/api/temperature-heatmap`, `/api/anomaly-calendar`, `/api/station-status`).
-- **Bot** ([bot.py](bot.py)) — `python-telegram-bot` Application. On start it spawns four asyncio loops alongside the polling updater: `stale_data_monitor_loop` (alerts admins when no fresh telemetry), `daily_weather_broadcast_loop` (sends snapshots at `TELEGRAM_DAILY_TIMES`), `dynamic_bot_name_loop` (rewrites the bot's display name with the current temperature), and `aggregation_loop` (periodically triggers old-data aggregation). The bot reads from the same DB the web writes to — there is no IPC.
+- **Web** ([app/main.py](app/main.py)) — FastAPI app. Calls `init_db()` on startup, mounts `/static`, renders Jinja2 templates from [app/templates/](app/templates/), and exposes both HTML pages (`/`, `/charts`, `/history`, `/station`, `/admin/settings`, `/admin/stations`, `/admin/import`) and JSON APIs (`/api/ingest`, `/api/current`, `/api/chart-data`, `/api/uptime`, `/api/comfort-risk`, `/api/period-comparison`, `/api/temperature-heatmap`, `/api/anomaly-calendar`, `/api/station-status`). On startup, also launches `_aggregation_loop` as a background asyncio task for periodic old-data aggregation.
+- **Bot** ([bot.py](bot.py)) — `python-telegram-bot` Application. **Optional** — only needed for Telegram notifications. On start it spawns three asyncio loops alongside the polling updater: `stale_data_monitor_loop` (alerts admins when no fresh telemetry), `daily_weather_broadcast_loop` (sends snapshots at `TELEGRAM_DAILY_TIMES`), and `dynamic_bot_name_loop` (rewrites the bot's display name with the current temperature). The bot reads from the same DB the web writes to — there is no IPC.
 
 Ingest flow: a device POSTs `{"devices": [{"mac": "...", "sensors": [{"id": "T1", "value": 23.4, "unit": "°C"}, ...]}, ...]}` to `/api/ingest`. `save_payload` writes one `ingest_batches` row per device and one `observations` row per numeric sensor reading. `received_at` is the server's UTC ingest time, not a device timestamp.
 
@@ -92,7 +92,7 @@ The parser stores `raw_values` for all numeric CSV columns, enabling user remapp
 - `AGGREGATION_INTERVAL_DAYS` (default 10) — how often to run
 - `AGGREGATION_LAST_RUN_AT` — internal timestamp of last successful run
 
-The `aggregation_loop` in [bot.py](bot.py) checks every 6 hours whether aggregation is due. Aggregated batches are marked with `"_aggregated": true` in `payload_json` to prevent re-aggregation. The process is transactional and idempotent.
+The `_aggregation_loop` in [app/main.py](app/main.py) checks every 6 hours whether aggregation is due. Aggregated batches are marked with `"_aggregated": true` in `payload_json` to prevent re-aggregation. The process is transactional and idempotent.
 
 ### Frontend
 
