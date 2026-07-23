@@ -266,7 +266,7 @@ curl http://127.0.0.1:18080/api/current
 ### Подтянуть изменения из GitHub
 
 ```bash
-cd /opt/weather-dashboard
+cd /путь/к/твоему/сайту
 git pull origin main
 ```
 
