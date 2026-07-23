@@ -256,3 +256,58 @@ docker compose down
 curl http://127.0.0.1:18080/api/status
 curl http://127.0.0.1:18080/api/current
 ```
+
+## 8) Обновление кода на сервере
+
+### Подтянуть изменения из GitHub
+
+```bash
+cd /opt/weather-dashboard
+git pull origin main
+```
+
+Если были изменения в `requirements.txt` — переустановить зависимости:
+```bash
+source .venv/bin/activate
+pip install -r requirements.txt
+deactivate
+```
+
+### Перезапуск сервисов после изменения кода
+
+После любых изменений в `.py`-файлах или шаблонах нужно перезапустить соответствующие сервисы:
+
+```bash
+# Перезапуск веб-сервера (после изменений в app/*.py, шаблонах, CSS)
+sudo systemctl restart weather-web
+
+# Перезапуск Telegram-бота (после изменений в bot.py)
+sudo systemctl restart weather-bot
+
+# Перезапуск обоих сразу
+sudo systemctl restart weather-web weather-bot
+```
+
+### Проверка статуса и логов
+
+```bash
+# Статус сервисов
+sudo systemctl status weather-web --no-pager
+sudo systemctl status weather-bot --no-pager
+
+# Логи в реальном времени
+sudo journalctl -u weather-web -f --no-pager
+sudo journalctl -u weather-bot -f --no-pager
+
+# Последние 50 строк лога
+sudo journalctl -u weather-web -n 50 --no-pager
+```
+
+### Полная последовательность обновления
+
+```bash
+cd /opt/weather-dashboard
+git pull origin main
+sudo systemctl restart weather-web weather-bot
+sudo systemctl status weather-web weather-bot --no-pager
+```

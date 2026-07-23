@@ -4,7 +4,7 @@ This file provides guidance to Claude Code (claude.ai/code) when working with co
 
 ## Project overview
 
-Self-hosted weather station dashboard: ingests telemetry from a local weather station over HTTP, stores it in SQLite, and exposes a FastAPI dashboard plus a Telegram bot. UI text and most user-facing strings are in Russian. There is no test suite.
+Self-hosted weather station dashboard: ingests telemetry from a local weather station over HTTP, stores it in SQLite, and exposes a FastAPI dashboard plus a Telegram bot. UI text and most user-facing strings are in Russian. Tests live in [tests/](tests/) (run with `python tests/test_*.py` directly — no test runner framework required).
 
 ## Run / develop
 
@@ -46,8 +46,8 @@ curl http://127.0.0.1:18080/api/current
 
 Two long-running processes share one SQLite file (`WEATHER_DB_PATH`):
 
-- **Web** ([app/main.py](app/main.py)) — FastAPI app. Calls `init_db()` on startup, mounts `/static`, renders Jinja2 templates from [app/templates/](app/templates/), and exposes both HTML pages (`/`, `/charts`, `/history`, `/station`) and JSON APIs (`/api/ingest`, `/api/current`, `/api/chart-data`, `/api/uptime`, `/api/comfort-risk`, `/api/period-comparison`, `/api/temperature-heatmap`, `/api/anomaly-calendar`, `/api/station-status`).
-- **Bot** ([bot.py](bot.py)) — `python-telegram-bot` Application. On start it spawns three asyncio loops alongside the polling updater: `stale_data_monitor_loop` (alerts admins when no fresh telemetry), `daily_weather_broadcast_loop` (sends snapshots at `TELEGRAM_DAILY_TIMES`), and `dynamic_bot_name_loop` (rewrites the bot's display name with the current temperature). The bot reads from the same DB the web writes to — there is no IPC.
+- **Web** ([app/main.py](app/main.py)) — FastAPI app. Calls `init_db()` on startup, mounts `/static`, renders Jinja2 templates from [app/templates/](app/templates/), and exposes both HTML pages (`/`, `/charts`, `/history`, `/station`, `/admin/settings`, `/admin/stations`, `/admin/import`) and JSON APIs (`/api/ingest`, `/api/current`, `/api/chart-data`, `/api/uptime`, `/api/comfort-risk`, `/api/period-comparison`, `/api/temperature-heatmap`, `/api/anomaly-calendar`, `/api/station-status`).
+- **Bot** ([bot.py](bot.py)) — `python-telegram-bot` Application. On start it spawns four asyncio loops alongside the polling updater: `stale_data_monitor_loop` (alerts admins when no fresh telemetry), `daily_weather_broadcast_loop` (sends snapshots at `TELEGRAM_DAILY_TIMES`), `dynamic_bot_name_loop` (rewrites the bot's display name with the current temperature), and `aggregation_loop` (periodically triggers old-data aggregation). The bot reads from the same DB the web writes to — there is no IPC.
 
 Ingest flow: a device POSTs `{"devices": [{"mac": "...", "sensors": [{"id": "T1", "value": 23.4, "unit": "°C"}, ...]}, ...]}` to `/api/ingest`. `save_payload` writes one `ingest_batches` row per device and one `observations` row per numeric sensor reading. `received_at` is the server's UTC ingest time, not a device timestamp.
 
@@ -72,13 +72,37 @@ Indexed by `(sensor_id, observed_at DESC)` and `(device_mac, observed_at DESC)`.
 
 [app/config.py](app/config.py) reads everything from environment variables (no settings file). Defaults are baked in for everything except `TELEGRAM_BOT_TOKEN` (required only by the bot, which raises on startup if missing) and `WEATHER_SITE_URL` (used to render the "Open site" button in Telegram). `WEATHER_TIMEZONE` defaults to `UTC`; both `app/main.py` and `app/db.py` independently fall back to UTC if the zone can't be loaded.
 
+[app/settings.py](app/settings.py) provides a DB-backed settings layer (`app_settings` table) editable via `/admin/settings`. Settings are defined in `SETTINGS_SCHEMA` with typed defaults, sections, and help text. Read-path uses an in-memory cache with invalidation on write. Sections: Общие, Telegram, Станции, Логирование, Агрегация.
+
 [app/logging_setup.py](app/logging_setup.py) configures Loguru per-service. Each entrypoint calls `setup_logging("web")` or `setup_logging("bot")` to write to `LOG_DIR/{web,bot}.log` with 10MB rotation and 14-day retention.
+
+### CSV retro-import
+
+[app/csv_import.py](app/csv_import.py) handles retrospective data import from narodmon.ru CSV exports. The admin page at `/admin/import` ([app/templates/admin/import.html](app/templates/admin/import.html)) provides:
+1. File upload with station selection
+2. Preview with configurable column→sensor mapping (dropdowns for every CSV column)
+3. Import with duplicate detection (skips batches with matching mac + timestamp)
+
+The parser stores `raw_values` for all numeric CSV columns, enabling user remapping of arbitrarily-named columns to any sensor_id from `SENSOR_MAP`. Auto-detected mappings are pre-selected; unknown columns default to "skip".
+
+### Data aggregation
+
+[app/aggregation.py](app/aggregation.py) reduces storage for old data by converting 5-minute readings into hourly averages. Controlled by settings:
+- `AGGREGATION_MAX_AGE_DAYS` (default 45) — data older than this is eligible
+- `AGGREGATION_INTERVAL_DAYS` (default 10) — how often to run
+- `AGGREGATION_LAST_RUN_AT` — internal timestamp of last successful run
+
+The `aggregation_loop` in [bot.py](bot.py) checks every 6 hours whether aggregation is due. Aggregated batches are marked with `"_aggregated": true` in `payload_json` to prevent re-aggregation. The process is transactional and idempotent.
 
 ### Frontend
 
-Server-rendered Jinja2 with a custom design system in [app/static/dashboard.css](app/static/dashboard.css) — `oklch` palette, light/dark theme on `data-bs-theme`, dense-grid dashboard ported from a Claude Design handoff (variation A "плотная сетка"). Tabler is **not** used — only `tabler-icons.min.css` for the theme-toggle glyph. Chart.js still powers the line graphs on `/charts`; everywhere else (sparklines, comfort gauge, min/max bars, period overlay) charts are inline SVG drawn by the small JS in `index.html`.
+Server-rendered Jinja2 with a custom design system in [app/static/dashboard.css](app/static/dashboard.css) — `oklch` palette, light/dark theme on `data-bs-theme`, dense-grid dashboard ported from a Claude Design handoff (variation A "плотная сетка"). Tabler is **not** used for layout — only `tabler-icons.min.css` for icons (theme toggle, admin gear icon). Chart.js still powers the line graphs on `/charts`; everywhere else (sparklines, comfort gauge, min/max bars, period overlay) charts are inline SVG drawn by the small JS in `index.html`.
 
-[app/templates/base.html](app/templates/base.html) renders the topbar (brand + nav + theme toggle), wraps `{% block content %}` in `<div class="dashboard">`, and ships the optional Yandex.Metrika tag (enabled iff `YANDEX_METRIKA_ID` is set). All four pages (`index`, `charts`, `history`, `station`) extend it and use the shared classes (`.card`, `.page-header`, `.seg`, `.data-table`, `.kpi-value`, `.alert-{good,warn,bad}`).
+[app/templates/base.html](app/templates/base.html) renders the topbar (brand + nav + admin gear icon + theme toggle), wraps `{% block content %}` in `<div class="dashboard">`, and ships the optional Yandex.Metrika tag (enabled iff `YANDEX_METRIKA_ID` is set). All pages extend it and use the shared classes (`.card`, `.page-header`, `.seg`, `.data-table`, `.kpi-value`, `.alert-{good,warn,bad}`).
+
+Admin pages ([app/templates/admin/](app/templates/admin/)) extend `admin/_layout.html` which provides segmented tab navigation (Настройки / Станции / Импорт). The import page features a two-step flow: upload → preview with configurable column mapping → import.
+
+The history page ([app/templates/history.html](app/templates/history.html)) includes a client-side sensor filter for "other data" readings. Filter state persists in `localStorage`. Default visible sensors: absolute humidity (`1`), dew point (`DEW`), perceived temperature (`T6`).
 
 Inter and JetBrains Mono are loaded from Google Fonts CDN; everything else (Tabler icons, Chart.js) is vendored in `app/static/vendor/`. When bumping vendored versions, also update the table in [README.md](README.md).
 
