@@ -1,6 +1,11 @@
 {% extends "base.html" %}
 {% block title %}Состояние станции | {{ app_title }}{% endblock %}
 
+{% block head %}
+<script src="/static/vendor/chartjs/chart.umd.min.js"></script>
+<script src="/static/vendor/chartjs/chartjs-adapter-date-fns.bundle.min.js"></script>
+{% endblock %}
+
 {% block content %}
   <header class="page-header">
     <div>
@@ -80,64 +85,104 @@
   {% if t5_data %}
   <div class="card" style="margin-top: 16px;">
     <div class="card-head">
-      <div class="card-title">Температура чипа (T5) — 24 часа</div>
-      <span class="card-code">
-        {% set last = t5_data[-1] %}
-        {{ last.value }}°C
-      </span>
+      <div class="card-title">Температура чипа (T5)</div>
+      <span class="card-code">24 часа</span>
     </div>
-    <div style="padding: 16px;">
-      <svg viewBox="0 0 600 120" style="width: 100%; height: auto;" preserveAspectRatio="none">
-        {# Compute min/max for scaling #}
-        {% set values = t5_data | map(attribute='value') | list %}
-        {% set min_v = values | min %}
-        {% set max_v = values | max %}
-        {% set range_v = max_v - min_v if max_v != min_v else 1 %}
-        {% set n = t5_data | length %}
-        {% set w = 600 %}
-        {% set h = 100 %}
-        {% set pad = 10 %}
-
-        {# Grid lines #}
-        <line x1="0" y1="{{ pad }}" x2="{{ w }}" y2="{{ pad }}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="4"/>
-        <line x1="0" y1="{{ pad + h/2 }}" x2="{{ w }}" y2="{{ pad + h/2 }}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="4"/>
-        <line x1="0" y1="{{ pad + h }}" x2="{{ w }}" y2="{{ pad + h }}" stroke="var(--border)" stroke-width="0.5"/>
-
-        {# Y-axis labels #}
-        <text x="4" y="{{ pad + 4 }}" fill="var(--muted)" font-size="9" font-family="JetBrains Mono, monospace">{{ "%.1f"|format(max_v) }}°</text>
-        <text x="4" y="{{ pad + h + 4 }}" fill="var(--muted)" font-size="9" font-family="JetBrains Mono, monospace">{{ "%.1f"|format(min_v) }}°</text>
-
-        {# Area fill #}
-        <path d="
-          M 0 {{ pad + h }}
-          {% for p in t5_data %}
-            {% set x = (loop.index0 / (n - 1) * w) if n > 1 else w/2 %}
-            {% set y = pad + h - ((p.value - min_v) / range_v * h) %}
-            L {{ x }} {{ y }}
-          {% endfor %}
-          L {{ w }} {{ pad + h }}
-          Z
-        " fill="var(--accent, #f59e0b)" fill-opacity="0.1"/>
-
-        {# Line #}
-        <polyline fill="none" stroke="var(--accent, #f59e0b)" stroke-width="1.5" points="
-          {% for p in t5_data %}
-            {% set x = (loop.index0 / (n - 1) * w) if n > 1 else w/2 %}
-            {% set y = pad + h - ((p.value - min_v) / range_v * h) %}
-            {{ x }},{{ y }}
-          {% endfor %}
-        "/>
-
-        {# X-axis time labels (first, middle, last) #}
-        {% if n > 0 %}
-        <text x="0" y="{{ pad + h + 14 }}" fill="var(--muted)" font-size="9" font-family="JetBrains Mono, monospace">{{ t5_data[0].time }}</text>
-        {% if n > 2 %}
-        <text x="{{ w/2 }}" y="{{ pad + h + 14 }}" fill="var(--muted)" font-size="9" font-family="JetBrains Mono, monospace" text-anchor="middle">{{ t5_data[(n//2)].time }}</text>
-        {% endif %}
-        <text x="{{ w }}" y="{{ pad + h + 14 }}" fill="var(--muted)" font-size="9" font-family="JetBrains Mono, monospace" text-anchor="end">{{ t5_data[-1].time }}</text>
-        {% endif %}
-      </svg>
-    </div>
+    <canvas id="chart-t5" class="chart-canvas"></canvas>
   </div>
   {% endif %}
+{% endblock %}
+
+{% block scripts %}
+{% if t5_data %}
+<script>
+(function () {
+  const raw = {{ t5_data | tojson }};
+  const is24h = (window.APP_TIME_FORMAT || "24h") === "24h";
+
+  function cssVar(name) {
+    return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
+  }
+  function isDarkTheme() {
+    return document.documentElement.getAttribute("data-bs-theme") === "dark";
+  }
+
+  const labels = raw.map(p => p.datetime);
+  const values = raw.map(p => p.value);
+
+  const ctx = document.getElementById("chart-t5");
+  if (!ctx) return;
+
+  const chart = new Chart(ctx, {
+    type: "line",
+    data: {
+      labels: labels,
+      datasets: [{
+        label: "T5",
+        data: values,
+        borderColor: "#f59e0b",
+        backgroundColor: "rgba(245, 158, 11, 0.1)",
+        fill: true,
+        tension: 0.3,
+        pointRadius: 0,
+        pointHoverRadius: 4,
+        borderWidth: 2,
+      }],
+    },
+    options: {
+      responsive: true,
+      maintainAspectRatio: false,
+      interaction: { intersect: false, mode: "index" },
+      plugins: {
+        legend: { display: false },
+        tooltip: {
+          callbacks: {
+            label: function(ctx) { return ctx.parsed.y.toFixed(1) + "°C"; }
+          }
+        }
+      },
+      scales: {
+        x: {
+          type: "time",
+          time: {
+            tooltipFormat: "dd.MM.yyyy HH:mm",
+          },
+          ticks: {
+            maxRotation: 0,
+            autoSkip: true,
+            maxTicksLimit: 8,
+            font: { size: 10, family: "JetBrains Mono, monospace" },
+            color: cssVar("--muted") || "#94a3b8",
+            callback: function(value, index, ticks) {
+              const date = new Date(value);
+              const hh = String(date.getHours()).padStart(2, "0");
+              const mm = String(date.getMinutes()).padStart(2, "0");
+              return is24h ? hh + ":" + mm : date.toLocaleTimeString([], {hour: 'numeric', minute: '2-digit'});
+            }
+          },
+          grid: { display: false },
+        },
+        y: {
+          ticks: {
+            font: { size: 10, family: "JetBrains Mono, monospace" },
+            color: cssVar("--muted") || "#94a3b8",
+            callback: function(v) { return v.toFixed(1) + "°"; }
+          },
+          grid: {
+            color: isDarkTheme() ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)",
+          },
+        }
+      }
+    }
+  });
+
+  window.addEventListener("theme-changed", () => {
+    chart.options.scales.y.grid.color = isDarkTheme() ? "rgba(255,255,255,0.06)" : "rgba(0,0,0,0.06)";
+    chart.options.scales.x.ticks.color = cssVar("--muted") || "#94a3b8";
+    chart.options.scales.y.ticks.color = cssVar("--muted") || "#94a3b8";
+    chart.update();
+  });
+})();
+</script>
+{% endif %}
 {% endblock %}
