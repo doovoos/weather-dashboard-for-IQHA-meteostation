@@ -38,7 +38,27 @@
         <div class="card-title">Пропуски за 24 часа</div>
       </div>
       {% if status.gaps_24h > 0 %}
-      <div class="alert-warn">Найдено пропусков: <strong>{{ status.gaps_24h }}</strong> (интервал больше 30 минут).</div>
+      <div class="alert-warn" style="margin-bottom: 12px;">Найдено пропусков: <strong>{{ status.gaps_24h }}</strong> (интервал больше 30 минут).</div>
+      <div class="table-wrap">
+        <table class="data-table">
+          <thead>
+            <tr>
+              <th>С</th>
+              <th>До</th>
+              <th>Длительность</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for gap in status.gap_details %}
+            <tr>
+              <td class="mono">{{ gap.start }}</td>
+              <td class="mono">{{ gap.end }}</td>
+              <td class="mono">{{ gap.duration_min }} мин</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
       {% else %}
       <div class="alert-good">Существенных пропусков не обнаружено.</div>
       {% endif %}
@@ -55,4 +75,69 @@
       {% endif %}
     </div>
   </div>
+
+  {# ---------- T5 Temperature Chart ---------- #}
+  {% if t5_data %}
+  <div class="card" style="margin-top: 16px;">
+    <div class="card-head">
+      <div class="card-title">Температура чипа (T5) — 24 часа</div>
+      <span class="card-code">
+        {% set last = t5_data[-1] %}
+        {{ last.value }}°C
+      </span>
+    </div>
+    <div style="padding: 16px;">
+      <svg viewBox="0 0 600 120" style="width: 100%; height: auto;" preserveAspectRatio="none">
+        {# Compute min/max for scaling #}
+        {% set values = t5_data | map(attribute='value') | list %}
+        {% set min_v = values | min %}
+        {% set max_v = values | max %}
+        {% set range_v = max_v - min_v if max_v != min_v else 1 %}
+        {% set n = t5_data | length %}
+        {% set w = 600 %}
+        {% set h = 100 %}
+        {% set pad = 10 %}
+
+        {# Grid lines #}
+        <line x1="0" y1="{{ pad }}" x2="{{ w }}" y2="{{ pad }}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="4"/>
+        <line x1="0" y1="{{ pad + h/2 }}" x2="{{ w }}" y2="{{ pad + h/2 }}" stroke="var(--border)" stroke-width="0.5" stroke-dasharray="4"/>
+        <line x1="0" y1="{{ pad + h }}" x2="{{ w }}" y2="{{ pad + h }}" stroke="var(--border)" stroke-width="0.5"/>
+
+        {# Y-axis labels #}
+        <text x="4" y="{{ pad + 4 }}" fill="var(--muted)" font-size="9" font-family="JetBrains Mono, monospace">{{ "%.1f"|format(max_v) }}°</text>
+        <text x="4" y="{{ pad + h + 4 }}" fill="var(--muted)" font-size="9" font-family="JetBrains Mono, monospace">{{ "%.1f"|format(min_v) }}°</text>
+
+        {# Area fill #}
+        <path d="
+          M 0 {{ pad + h }}
+          {% for p in t5_data %}
+            {% set x = (loop.index0 / (n - 1) * w) if n > 1 else w/2 %}
+            {% set y = pad + h - ((p.value - min_v) / range_v * h) %}
+            L {{ x }} {{ y }}
+          {% endfor %}
+          L {{ w }} {{ pad + h }}
+          Z
+        " fill="var(--accent, #f59e0b)" fill-opacity="0.1"/>
+
+        {# Line #}
+        <polyline fill="none" stroke="var(--accent, #f59e0b)" stroke-width="1.5" points="
+          {% for p in t5_data %}
+            {% set x = (loop.index0 / (n - 1) * w) if n > 1 else w/2 %}
+            {% set y = pad + h - ((p.value - min_v) / range_v * h) %}
+            {{ x }},{{ y }}
+          {% endfor %}
+        "/>
+
+        {# X-axis time labels (first, middle, last) #}
+        {% if n > 0 %}
+        <text x="0" y="{{ pad + h + 14 }}" fill="var(--muted)" font-size="9" font-family="JetBrains Mono, monospace">{{ t5_data[0].time }}</text>
+        {% if n > 2 %}
+        <text x="{{ w/2 }}" y="{{ pad + h + 14 }}" fill="var(--muted)" font-size="9" font-family="JetBrains Mono, monospace" text-anchor="middle">{{ t5_data[(n//2)].time }}</text>
+        {% endif %}
+        <text x="{{ w }}" y="{{ pad + h + 14 }}" fill="var(--muted)" font-size="9" font-family="JetBrains Mono, monospace" text-anchor="end">{{ t5_data[-1].time }}</text>
+        {% endif %}
+      </svg>
+    </div>
+  </div>
+  {% endif %}
 {% endblock %}

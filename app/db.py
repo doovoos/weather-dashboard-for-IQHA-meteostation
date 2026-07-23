@@ -997,6 +997,31 @@ def get_anomaly_calendar(month: str | None = None, conn: sqlite3.Connection | No
     }
 
 
+def get_t5_chart_series(hours: int = 24, conn: sqlite3.Connection | None = None) -> list[dict[str, Any]]:
+    """Возвращает точки T5 (температура чипа) за последние N часов."""
+    hours = max(1, min(hours, 168))
+    with use_connection(conn) as connection:
+        rows = connection.execute(
+            """
+            SELECT observed_at, value
+            FROM observations
+            WHERE upper(sensor_id) = 'T5'
+              AND julianday(observed_at) >= julianday('now', ?)
+            ORDER BY observed_at ASC
+            """,
+            (f"-{hours} hours",),
+        ).fetchall()
+    result = []
+    for row in rows:
+        local_dt = to_local_timestamp(row["observed_at"])
+        result.append({
+            "time": local_dt.strftime("%H:%M"),
+            "datetime": local_dt.strftime("%Y-%m-%d %H:%M"),
+            "value": round(float(row["value"]), 1),
+        })
+    return result
+
+
 def get_station_status(conn: sqlite3.Connection | None = None) -> dict[str, Any]:
     with use_connection(conn) as connection:
         snapshot = get_latest_snapshot(conn=connection)
@@ -1031,16 +1056,24 @@ def get_station_status(conn: sqlite3.Connection | None = None) -> dict[str, Any]
 
     avg_interval = None
     gaps = 0
+    gap_details: list[dict[str, Any]] = []
     if len(recent) >= 2:
         intervals: list[float] = []
         prev = parse_timestamp(recent[0]["received_at"])
+        prev_raw = recent[0]["received_at"]
         for row in recent[1:]:
             cur = parse_timestamp(row["received_at"])
             delta_min = (cur - prev).total_seconds() / 60.0
             intervals.append(delta_min)
             if delta_min > 30:
                 gaps += 1
+                gap_details.append({
+                    "start": to_local_timestamp(prev_raw).strftime("%H:%M"),
+                    "end": to_local_timestamp(row["received_at"]).strftime("%H:%M"),
+                    "duration_min": round(delta_min, 1),
+                })
             prev = cur
+            prev_raw = row["received_at"]
         avg_interval = round(sum(intervals) / len(intervals), 1) if intervals else None
 
     missing_primary = []
@@ -1056,6 +1089,7 @@ def get_station_status(conn: sqlite3.Connection | None = None) -> dict[str, Any]
         "packets_7d": int(packets_7d or 0),
         "avg_interval_min": avg_interval,
         "gaps_24h": gaps,
+        "gap_details": gap_details,
         "sensor_count": len(snapshot.get("readings", [])) if snapshot else 0,
         "missing_primary": missing_primary,
     }

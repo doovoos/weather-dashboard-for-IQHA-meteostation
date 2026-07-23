@@ -36,6 +36,7 @@ from .db import (
     get_latest_snapshot,
     get_period_comparison,
     get_station_status,
+    get_t5_chart_series,
     get_temperature_heatmap,
     get_today_extremes,
     get_today_temperature_extremes,
@@ -220,7 +221,8 @@ def history_page(
 @app.get("/station", response_class=HTMLResponse)
 def station_page(request: Request, conn: sqlite3.Connection = Depends(db_dependency)) -> HTMLResponse:
     status = get_station_status(conn=conn)
-    return render_template(request, "station.html", {"status": status})
+    t5_data = get_t5_chart_series(hours=24, conn=conn)
+    return render_template(request, "station.html", {"status": status, "t5_data": t5_data})
 
 
 @app.post("/api/ingest", response_model=IngestResult)
