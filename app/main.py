@@ -179,8 +179,12 @@ def history_page(
     conn: sqlite3.Connection = Depends(db_dependency),
 ) -> HTMLResponse:
     selected_day = day or datetime.now(APP_TZ).date().isoformat()
-    items = get_history_for_date(selected_day, conn=conn)
-    return render_template(request, "history.html", {"selected_day": selected_day, "items": items})
+    items, other_sensors = get_history_for_date(selected_day, conn=conn)
+    return render_template(request, "history.html", {
+        "selected_day": selected_day,
+        "items": items,
+        "other_sensors": other_sensors,
+    })
 
 
 @app.get("/station", response_class=HTMLResponse)

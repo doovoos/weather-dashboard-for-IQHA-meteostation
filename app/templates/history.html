@@ -15,6 +15,24 @@
   </header>
 
   {% if items %}
+  {# ---------- Sensor filter ---------- #}
+  {% if other_sensors %}
+  <div class="card mb-16">
+    <div class="card-head">
+      <div class="card-title">Фильтр «Остальных данных»</div>
+    </div>
+    <div style="padding: 12px 16px; display: flex; flex-wrap: wrap; gap: 12px;">
+      {% for sid, name in other_sensors.items()|sort %}
+      <label style="display: flex; align-items: center; gap: 6px; cursor: pointer;" class="small">
+        <input type="checkbox" class="other-filter-cb" value="{{ sid }}"
+          {% if sid in ("1", "DEW", "T6") %}checked{% endif %}>
+        {{ name }} <span class="mono muted">({{ sid }})</span>
+      </label>
+      {% endfor %}
+    </div>
+  </div>
+  {% endif %}
+
   <div class="card no-pad">
     <div class="table-wrap">
       <table class="data-table">
@@ -36,7 +54,15 @@
             <td class="mono">{{ item.temperature }}</td>
             <td class="mono">{{ item.humidity }}</td>
             <td class="mono">{{ item.pressure }}</td>
-            <td class="muted small">{{ item.other_data }}</td>
+            <td class="muted small">
+              {% if item.other_data %}
+                {% for s in item.other_data %}
+                  <span class="other-reading" data-sensor="{{ s.sensor_id }}">{{ s.label }}: {{ "%.2f"|format(s.value) }}{% if s.unit %} {{ s.unit }}{% endif %}</span>{% if not loop.last %} | {% endif %}
+                {% endfor %}
+              {% else %}
+                —
+              {% endif %}
+            </td>
           </tr>
           {% endfor %}
         </tbody>
@@ -49,4 +75,42 @@
     <div>Как только станция пришлёт показания за этот день, они появятся здесь.</div>
   </div>
   {% endif %}
+
+  <script>
+  (function () {
+    const checkboxes = document.querySelectorAll('.other-filter-cb');
+    if (!checkboxes.length) return;
+
+    // Load saved filter from localStorage
+    const STORAGE_KEY = 'history_other_filter';
+    const saved = localStorage.getItem(STORAGE_KEY);
+    if (saved !== null) {
+      const active = new Set(JSON.parse(saved));
+      checkboxes.forEach(cb => { cb.checked = active.has(cb.value); });
+    }
+
+    function applyFilter() {
+      const active = new Set();
+      checkboxes.forEach(cb => { if (cb.checked) active.add(cb.value); });
+      localStorage.setItem(STORAGE_KEY, JSON.stringify([...active]));
+
+      document.querySelectorAll('.other-reading').forEach(el => {
+        el.style.display = active.has(el.dataset.sensor) ? '' : 'none';
+      });
+
+      // Hide separators next to hidden readings
+      document.querySelectorAll('.other-reading').forEach(el => {
+        const next = el.nextSibling;
+        if (next && next.nodeType === 3 && next.textContent.trim() === '|') {
+          const visible = el.style.display !== 'none';
+          const nextVisible = el.nextElementSibling && el.nextElementSibling.style.display !== 'none';
+          next.style.display = (visible && nextVisible) ? '' : 'none';
+        }
+      });
+    }
+
+    checkboxes.forEach(cb => cb.addEventListener('change', applyFilter));
+    applyFilter();
+  })();
+  </script>
 {% endblock %}

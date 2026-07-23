@@ -470,7 +470,8 @@ def get_history_for_date(target_date: str, conn: sqlite3.Connection | None = Non
         )
 
     result: list[dict[str, Any]] = []
-    core_ids = {"T1", "T2", "T3", "T4", "T5", "T6", "RH", "H1", "H2", "PRESS", "HPA"}
+    core_ids = {"T1", "T2", "T3", "T4", "RH", "H1", "H2", "PRESS", "HPA"}
+    all_other_sensors: dict[str, str] = {}  # {sensor_id: sensor_name}
 
     # Get time format from settings
     try:
@@ -483,12 +484,17 @@ def get_history_for_date(target_date: str, conn: sqlite3.Connection | None = Non
     for item in grouped.values():
         reading_lookup = {reading["sensor_id"]: reading for reading in item["readings"]}
         local_dt = to_local_timestamp(item["received_at"])
-        extra = []
+        extra: list[dict[str, Any]] = []
         for reading in item["readings"]:
             if reading["sensor_id"] in core_ids:
                 continue
-            unit = f" {reading['unit']}" if reading["unit"] else ""
-            extra.append(f"{reading['sensor_name']}: {reading['value']:.2f}{unit}")
+            all_other_sensors[reading["sensor_id"]] = reading["sensor_name"]
+            extra.append({
+                "sensor_id": reading["sensor_id"],
+                "label": reading["sensor_name"],
+                "value": reading["value"],
+                "unit": reading["unit"],
+            })
 
         result.append(
             {
@@ -498,11 +504,11 @@ def get_history_for_date(target_date: str, conn: sqlite3.Connection | None = Non
                 "temperature": _value_by_ids(reading_lookup, TEMPERATURE_SENSOR_IDS),
                 "humidity": _value_by_ids(reading_lookup, HUMIDITY_SENSOR_IDS),
                 "pressure": _value_by_ids(reading_lookup, PRESSURE_SENSOR_IDS),
-                "other_data": " | ".join(extra) if extra else "—",
+                "other_data": extra,
             }
         )
 
-    return result
+    return result, all_other_sensors
 
 
 def get_uptime_monitor(hours: int = 24, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
