@@ -236,6 +236,11 @@ def set_value(key: str, value: str, conn: sqlite3.Connection | None = None) -> N
             """,
             (key, value, now),
         )
+        # Коммитим сразу: без этого кэш ниже может перезагрузиться
+        # до коммита транзакции запроса и «залипнуть» на старых значениях
+        # (reconfigure_logging и последующие чтения идут через новые соединения).
+        if conn is not None:
+            conn.commit()
     _invalidate_cache()
     # Refresh timezone if it changed
     if key == "WEATHER_TIMEZONE":
@@ -266,6 +271,9 @@ def set_many(values: dict[str, str], conn: sqlite3.Connection | None = None) -> 
                 """,
                 (key, value, now),
             )
+        # Коммитим сразу — см. комментарий в set_value
+        if conn is not None:
+            conn.commit()
     _invalidate_cache()
     # Refresh timezone if it changed
     if "WEATHER_TIMEZONE" in values:
