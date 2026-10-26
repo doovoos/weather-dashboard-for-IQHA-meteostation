@@ -340,6 +340,8 @@ function shiftHeatmap(deltaDays) {
 document.getElementById("heatmap-prev")?.addEventListener("click", () => shiftHeatmap(-30));
 document.getElementById("heatmap-next")?.addEventListener("click", () => shiftHeatmap(30));
 
+loadHeatmap(heatmapOffset);
+
 loadAnomalyCalendar();
 </script>
 {% endblock %}
