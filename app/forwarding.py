@@ -35,11 +35,13 @@ def _forward_sync(body: bytes, url: str, timeout: int) -> None:
         with urllib.request.urlopen(request, timeout=timeout) as response:
             status = response.status
             if status >= 400:
-                logger.warning("Forward: {} ответил статусом {}", url, status)
+                detail = response.read(512).decode("utf-8", errors="replace").strip()
+                logger.warning("Forward: {} ответил статусом {} {}", url, status, detail)
             else:
                 logger.debug("Forward: {} пакет ({} байт) отправлен, статус {}", url, len(body), status)
     except urllib.error.HTTPError as err:
-        logger.warning("Forward: {} вернул HTTP {}: {}", url, err.code, err.reason)
+        detail = err.read(512).decode("utf-8", errors="replace").strip()
+        logger.warning("Forward: {} вернул HTTP {}: {} {}", url, err.code, err.reason, detail)
     except (urllib.error.URLError, TimeoutError, OSError) as err:
         logger.warning("Forward: не удалось отправить пакет на {}: {}", url, err)
 
