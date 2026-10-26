@@ -40,6 +40,8 @@
     <div class="a-header-right">
       <div class="seg" id="range-switcher">
         <button class="seg-btn" data-range="1h">1ч</button>
+        <button class="seg-btn" data-range="3h">3ч</button>
+        <button class="seg-btn" data-range="12h">12ч</button>
         <button class="seg-btn active" data-range="24h">24ч</button>
         <button class="seg-btn" data-range="7d">7д</button>
         <button class="seg-btn" data-range="30d">30д</button>
@@ -616,10 +618,8 @@
       if (!btn) return;
       rangeSwitcher.querySelectorAll(".seg-btn").forEach(b => b.classList.toggle("active", b === btn));
       const range = btn.getAttribute("data-range");
-      const params = range === "1h" ? "hours=1"
-        : range === "24h" ? "hours=24"
-        : range === "7d"  ? "hours=" + (7 * 24)
-        : "hours=" + (30 * 24);
+      const hoursMap = { "1h": 1, "3h": 3, "12h": 12, "24h": 24, "7d": 7 * 24, "30d": 30 * 24 };
+      const params = "hours=" + (hoursMap[range] || 24);
       fetch("/api/chart-data?" + params)
         .then(r => r.ok ? r.json() : Promise.reject())
         .then(data => {

@@ -48,7 +48,14 @@
 
   <div class="charts-bottom">
     <div class="card">
-      <div class="card-head"><div class="card-title">Тепловая карта температуры по часам (T1)</div><span class="card-code">30 дней</span></div>
+      <div class="card-head">
+        <div class="card-title">Тепловая карта температуры по часам (T1)</div>
+        <div class="cal-nav">
+          <button type="button" class="icon-btn" id="heatmap-prev" aria-label="Предыдущие 30 дней">‹</button>
+          <span id="heatmap-range" class="mono small muted">30 дней</span>
+          <button type="button" class="icon-btn" id="heatmap-next" aria-label="Следующие 30 дней">›</button>
+        </div>
+      </div>
       <div class="heatmap-wrap"><div id="heatmap" class="heatmap-grid"></div></div>
     </div>
     <div class="card">
@@ -301,10 +308,37 @@ fetch("/api/chart-data?days=" + days)
   })
   .catch((error) => showStatus("Ошибка загрузки графиков: " + error.message));
 
-fetch("/api/temperature-heatmap?days=30")
-  .then((r) => r.ok ? r.json() : Promise.reject())
-  .then(renderHeatmap)
-  .catch(() => renderHeatmap(null));
+let heatmapOffset = 0; // 0 = окно, заканчивающееся сегодня
+
+function formatDayShort(iso) {
+  const [y, m, d] = iso.split("-");
+  return d + "." + m + "." + y;
+}
+
+function loadHeatmap(offset) {
+  return fetch("/api/temperature-heatmap?days=30&offset=" + offset)
+    .then((r) => r.ok ? r.json() : Promise.reject())
+    .then((payload) => {
+      renderHeatmap(payload);
+      const rangeEl = document.getElementById("heatmap-range");
+      const nextBtn = document.getElementById("heatmap-next");
+      if (rangeEl && Array.isArray(payload.labels) && payload.labels.length) {
+        rangeEl.textContent = formatDayShort(payload.labels[0]) + " – " + formatDayShort(payload.labels[payload.labels.length - 1]);
+      }
+      if (nextBtn) nextBtn.disabled = offset === 0;
+    })
+    .catch(() => renderHeatmap(null));
+}
+
+function shiftHeatmap(deltaDays) {
+  const next = Math.max(0, heatmapOffset + deltaDays);
+  if (next === heatmapOffset) return;
+  heatmapOffset = next;
+  loadHeatmap(heatmapOffset);
+}
+
+document.getElementById("heatmap-prev")?.addEventListener("click", () => shiftHeatmap(-30));
+document.getElementById("heatmap-next")?.addEventListener("click", () => shiftHeatmap(30));
 
 loadAnomalyCalendar();
 </script>

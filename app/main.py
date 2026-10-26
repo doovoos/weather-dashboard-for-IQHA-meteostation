@@ -5,6 +5,7 @@ from pathlib import Path
 from typing import Any
 from zoneinfo import ZoneInfo, ZoneInfoNotFoundError
 
+import asyncio
 import hmac
 import json
 import sqlite3
@@ -15,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from loguru import logger
 
-from . import csv_import, settings, stations as stations_repo
+from . import csv_import, forwarding, settings, stations as stations_repo
 from .auth import admin_enabled, require_admin
 from .config import (
     INGEST_MAX_BODY_BYTES,
@@ -62,6 +63,9 @@ from .schemas import (
 app = FastAPI(title="Weather Station", version="1.2.0")
 templates = Jinja2Templates(directory=str(Path(__file__).parent / "templates"))
 app.mount("/static", StaticFiles(directory=str(Path(__file__).parent / "static")), name="static")
+
+# Ссылки на фоновые задачи пересылки пакетов (чтобы их не собрал GC)
+_FORWARD_TASKS: set[asyncio.Task] = set()
 
 # Lazy timezone resolution: try to get from DB settings, fallback to env
 def _get_app_tz() -> ZoneInfo:
@@ -285,6 +289,18 @@ async def ingest(request: Request, conn: sqlite3.Connection = Depends(db_depende
             raise HTTPException(status_code=403, detail=f"Station {mac} is disabled.")
 
     result = save_payload(payload, conn=conn)
+
+    # Фоновая пересылка исходного пакета (если включена в настройках).
+    # Не блокируем ответ станции: ошибки пересылки логируются внутри.
+    try:
+        if settings.get_bool("FORWARD_RAW_ENABLED", conn=conn) and (settings.get_string("FORWARD_RAW_URL", conn=conn) or "").strip():
+            task = asyncio.create_task(asyncio.to_thread(forwarding.forward_raw_payload, body, conn))
+            _FORWARD_TASKS.add(task)
+            task.add_done_callback(_FORWARD_TASKS.discard)
+    except RuntimeError:
+        # Нет запущенного event loop (например, синхронный вызов в тестах) — пересылаем сразу
+        forwarding.forward_raw_payload(body, conn)
+
     return {"status": "ok", **result}
 
 
@@ -664,8 +680,12 @@ def api_period_comparison(conn: sqlite3.Connection = Depends(db_dependency)) -> 
 
 
 @app.get("/api/temperature-heatmap", response_model=Heatmap)
-def api_temperature_heatmap(days: int = 30, conn: sqlite3.Connection = Depends(db_dependency)) -> dict[str, Any]:
-    return get_temperature_heatmap(days, conn=conn)
+def api_temperature_heatmap(
+    days: int = 30,
+    offset: int = 0,
+    conn: sqlite3.Connection = Depends(db_dependency),
+) -> dict[str, Any]:
+    return get_temperature_heatmap(days, offset=offset, conn=conn)
 
 
 @app.get("/api/anomaly-calendar", response_model=AnomalyCalendar)

@@ -112,7 +112,7 @@ def env_settings_dict() -> dict[str, str]:
         "LOGGING_ENABLED",
         "LOGGING_LEVEL",
         "LOGGING_MAX_SIZE_MB",
-        "LOGGING_BACKUP_COUNT",
+        "LOGGING_RETENTION_DAYS",
     )
     overrides: dict[str, str] = {}
     for key in keys:

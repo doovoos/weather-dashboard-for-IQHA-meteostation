@@ -74,7 +74,7 @@ Indexed by `(sensor_id, observed_at DESC)` and `(device_mac, observed_at DESC)`.
 
 [app/settings.py](app/settings.py) provides a DB-backed settings layer (`app_settings` table) editable via `/admin/settings`. Settings are defined in `SETTINGS_SCHEMA` with typed defaults, sections, and help text. Read-path uses an in-memory cache with invalidation on write. Sections: Общие, Telegram, Станции, Логирование, Агрегация.
 
-[app/logging_setup.py](app/logging_setup.py) configures Loguru per-service. Each entrypoint calls `setup_logging("web")` or `setup_logging("bot")` to write to `LOG_DIR/{web,bot}.log` with 10MB rotation and 14-day retention.
+[app/logging_setup.py](app/logging_setup.py) configures Loguru per-service. Each entrypoint calls `setup_logging("web")` or `setup_logging("bot")` to write to `LOG_DIR/{web,bot}.log` with 10MB rotation and `LOGGING_RETENTION_DAYS` (default 25) day retention.
 
 ### CSV retro-import
 

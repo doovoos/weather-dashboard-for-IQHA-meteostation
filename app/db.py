@@ -876,11 +876,19 @@ def _get_period_comparison_impl(connection: sqlite3.Connection) -> dict[str, Any
 
 
 @cached(ttl_seconds=300)
-def get_temperature_heatmap(days: int = 30, conn: sqlite3.Connection | None = None) -> dict[str, Any]:
+def get_temperature_heatmap(
+    days: int = 30,
+    offset: int = 0,
+    conn: sqlite3.Connection | None = None,
+) -> dict[str, Any]:
+    """Тепловая карта температуры за period дней, заканчивая offset дней назад (0 = сегодня)."""
     period = max(7, min(days, 90))
+    offset = max(0, offset)
     today_local = datetime.now(LOCAL_TZ).date()
-    start_day = today_local - timedelta(days=period - 1)
+    end_day = today_local - timedelta(days=offset)
+    start_day = end_day - timedelta(days=period - 1)
     start_utc, _ = _local_day_bounds(start_day)
+    _, end_utc = _local_day_bounds(end_day)
 
     with use_connection(conn) as connection:
         rows = connection.execute(
@@ -889,9 +897,10 @@ def get_temperature_heatmap(days: int = 30, conn: sqlite3.Connection | None = No
             FROM observations
             WHERE upper(sensor_id) = 'T1'
               AND julianday(observed_at) >= julianday(?)
+              AND julianday(observed_at) < julianday(?)
             ORDER BY observed_at ASC
             """,
-            (start_utc,),
+            (start_utc, end_utc),
         ).fetchall()
 
     bucket: dict[str, dict[int, list[float]]] = {}
