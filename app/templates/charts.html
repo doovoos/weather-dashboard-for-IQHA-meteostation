@@ -40,12 +40,16 @@
       <canvas id="chart-pressure" class="chart-canvas"></canvas>
     </div>
     <div class="card">
+      <div class="card-head"><div class="card-title">Климат</div><span class="card-code">DEW / 1 / VPD / MIX_RATIO / AIR_D</span></div>
+      <canvas id="chart-climate" class="chart-canvas"></canvas>
+    </div>
+    <div class="card">
       <div class="card-head"><div class="card-title">Ветер</div><span class="card-code">WS</span></div>
       <canvas id="chart-wind" class="chart-canvas"></canvas>
     </div>
-    <div class="card full">
+    <div class="card">
       <div class="card-head"><div class="card-title">Качество воздуха и осадки</div><span class="card-code">PM2 / PM10 / RAIN2</span></div>
-      <canvas id="chart-extra" class="chart-canvas chart-canvas-lg"></canvas>
+      <canvas id="chart-extra" class="chart-canvas"></canvas>
     </div>
   </div>
 
@@ -293,6 +297,9 @@ const palette = {
   wind:   cssVar("--c-wind")  || "#2563eb",
   rain:   cssVar("--c-rain")   || "#0284c7",
   feels:  "#8b5cf6",
+  dew:    "#0d9488",
+  fuchsia: "#d946ef",
+  slate:  "#64748b",
   red:    cssVar("--red")     || "#dc2626",
   muted:  cssVar("--muted")   || "#6b7280",
 };
@@ -305,6 +312,13 @@ fetch(chartDataUrl)
       createChart("chart-temp",     [datasetByIds(series, ["T1"], palette.temp), datasetByIds(series, ["T6"], palette.feels)]),
       createChart("chart-humidity", [datasetByIds(series, ["RH","H1","H2"], palette.hum)]),
       createChart("chart-pressure", [datasetByIds(series, ["PRESS","HPA"], palette.press)]),
+      createChart("chart-climate",  [
+        datasetByIds(series, ["DEW"], palette.dew),
+        datasetByIds(series, ["1"], palette.hum),
+        datasetByIds(series, ["VPD"], palette.red),
+        datasetByIds(series, ["MIX_RATIO"], palette.fuchsia),
+        datasetByIds(series, ["AIR_D"], palette.slate),
+      ]),
       createChart("chart-wind",     [datasetByIds(series, ["WS"], palette.wind), datasetByIds(series, ["WS1"], palette.muted)]),
       createChart("chart-extra",    [datasetByIds(series, ["PM2"], palette.red), datasetByIds(series, ["PM10"], palette.muted), datasetByIds(series, ["RAIN2"], palette.rain)])
     ];
