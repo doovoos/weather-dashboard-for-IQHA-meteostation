@@ -56,7 +56,7 @@
         <div class="cal-nav">
           <button type="button" class="icon-btn" id="heatmap-prev" aria-label="Предыдущие 30 дней">‹</button>
           <span id="heatmap-range" class="mono small muted">30 дней</span>
-          <button type="button" class="icon-btn" id="heatmap-next" aria-label="Следующие 30 дней">›</button>
+          <button type="button" class="icon-btn" id="heatmap-next" aria-label="Следующие 30 дней" disabled>›</button>
         </div>
       </div>
       <div class="heatmap-wrap"><div id="heatmap" class="heatmap-grid"></div></div>
@@ -337,14 +337,16 @@ function loadHeatmap(offset) {
 }
 
 function shiftHeatmap(deltaDays) {
+  // deltaDays > 0 — дальше в прошлое, < 0 — ближе к сегодня (не дальше 0)
   const next = Math.max(0, heatmapOffset + deltaDays);
   if (next === heatmapOffset) return;
   heatmapOffset = next;
   loadHeatmap(heatmapOffset);
 }
 
-document.getElementById("heatmap-prev")?.addEventListener("click", () => shiftHeatmap(-30));
-document.getElementById("heatmap-next")?.addEventListener("click", () => shiftHeatmap(30));
+// ‹ — на 30 дней назад в историю, › — на 30 дней вперёд (к сегодня)
+document.getElementById("heatmap-prev")?.addEventListener("click", () => shiftHeatmap(30));
+document.getElementById("heatmap-next")?.addEventListener("click", () => shiftHeatmap(-30));
 
 loadHeatmap(heatmapOffset);
 
