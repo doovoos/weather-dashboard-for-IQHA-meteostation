@@ -14,8 +14,11 @@
     </div>
     <div class="page-header-right">
       <div class="seg" id="range-switcher">
+        {% for option in [1, 3, 12] %}
+        <a class="seg-btn {% if option == hours %}active{% endif %}" href="/charts?hours={{ option }}">{{ option }}ч</a>
+        {% endfor %}
         {% for option in [1, 3, 7, 30] %}
-        <a class="seg-btn {% if option == days %}active{% endif %}" href="/charts?days={{ option }}">{{ option }}д</a>
+        <a class="seg-btn {% if days is not none and option == days %}active{% endif %}" href="/charts?days={{ option }}">{{ option }}д</a>
         {% endfor %}
       </div>
     </div>
@@ -25,7 +28,7 @@
 
   <div class="charts-grid">
     <div class="card">
-      <div class="card-head"><div class="card-title">Температура (T1)</div><span class="card-code">T1</span></div>
+      <div class="card-head"><div class="card-title">Температура / ощущаемая</div><span class="card-code">T1 / T6</span></div>
       <canvas id="chart-temp" class="chart-canvas"></canvas>
     </div>
     <div class="card">
@@ -79,7 +82,9 @@
 
 {% block scripts %}
 <script>
-const days = {{ days }};
+const days = {{ days if days is not none else 'null' }};
+const hours = {{ hours if hours is not none else 'null' }};
+const chartDataUrl = hours !== null ? "/api/chart-data?hours=" + hours : "/api/chart-data?days=" + days;
 
 function cssVar(name) {
   return getComputedStyle(document.documentElement).getPropertyValue(name).trim();
@@ -286,17 +291,18 @@ const palette = {
   hum:    cssVar("--c-hum")   || "#059669",
   press:  cssVar("--c-press") || "#d97706",
   wind:   cssVar("--c-wind")  || "#2563eb",
-  rain:   cssVar("--c-rain")  || "#0284c7",
+  rain:   cssVar("--c-rain")   || "#0284c7",
+  feels:  "#8b5cf6",
   red:    cssVar("--red")     || "#dc2626",
   muted:  cssVar("--muted")   || "#6b7280",
 };
 
-fetch("/api/chart-data?days=" + days)
+fetch(chartDataUrl)
   .then((response) => response.ok ? response.json() : Promise.reject(new Error("HTTP " + response.status)))
   .then((payload) => {
     const series = payload.series || {};
     const built = [
-      createChart("chart-temp",     [datasetByIds(series, ["T1"], palette.temp)]),
+      createChart("chart-temp",     [datasetByIds(series, ["T1"], palette.temp), datasetByIds(series, ["T6"], palette.feels)]),
       createChart("chart-humidity", [datasetByIds(series, ["RH","H1","H2"], palette.hum)]),
       createChart("chart-pressure", [datasetByIds(series, ["PRESS","HPA"], palette.press)]),
       createChart("chart-wind",     [datasetByIds(series, ["WS"], palette.wind), datasetByIds(series, ["WS1"], palette.muted)]),

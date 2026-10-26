@@ -202,9 +202,12 @@ def dashboard(
 
 
 @app.get("/charts", response_class=HTMLResponse)
-def charts_page(request: Request, days: int = 1) -> HTMLResponse:
-    period = max(1, min(days, 90))
-    return render_template(request, "charts.html", {"days": period})
+def charts_page(request: Request, days: int | None = None, hours: int | None = None) -> HTMLResponse:
+    if hours is not None:
+        period_hours = max(1, min(hours, 90 * 24))
+        return render_template(request, "charts.html", {"days": None, "hours": period_hours})
+    period = max(1, min(days or 1, 90))
+    return render_template(request, "charts.html", {"days": period, "hours": None})
 
 
 @app.get("/history", response_class=HTMLResponse)
