@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from loguru import logger
 
-from . import csv_import, forwarding, settings, stations as stations_repo, zambretti
+from . import csv_import, forwarding, settings, stations as stations_repo, yandex_weather, zambretti
 from .auth import admin_enabled, require_admin
 from .config import (
     INGEST_MAX_BODY_BYTES,
@@ -185,6 +185,7 @@ def dashboard(
     comparison = get_period_comparison(conn=conn)
     chart_series = get_chart_series(days=1, conn=conn)
     forecast = zambretti.compute_forecast(conn=conn)
+    yandex = yandex_weather.get_weather(conn=conn)
     return render_template(
         request,
         "index.html",
@@ -197,6 +198,7 @@ def dashboard(
             "comparison": comparison,
             "chart_series": chart_series,
             "forecast": forecast,
+            "yandex_weather": yandex,
             "stations": enabled_stations,
             "active_station": active_station,
         },
@@ -322,6 +324,14 @@ def api_forecast(conn: sqlite3.Connection = Depends(db_dependency)) -> dict[str,
     return forecast
 
 
+@app.get("/api/yandex-weather")
+def api_yandex_weather(conn: sqlite3.Connection = Depends(db_dependency)) -> dict[str, Any]:
+    result = yandex_weather.get_weather(conn=conn)
+    if result is None:
+        return {"available": False, "detail": "Не настроен API-ключ Яндекс.Погоды или координаты станции."}
+    return result
+
+
 # ---------- Elevation lookup (Open-Meteo / Google Maps Elevation API) ----------
 
 def _elevation_from_open_meteo(lat: float, lon: float) -> float:
@@ -431,6 +441,8 @@ async def admin_settings_post(
     form = await request.form()
     submitted: dict[str, str] = {}
     for spec in settings.SETTINGS_SCHEMA:
+        if spec.type == "hidden":
+            continue  # служебные ключи (кэши) не приходят из формы — не затираем
         if spec.type == "bool":
             submitted[spec.key] = "1" if form.get(spec.key) else "0"
         else:

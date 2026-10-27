@@ -87,6 +87,18 @@ SETTINGS_SCHEMA: tuple[SettingDef, ...] = (
     SettingDef("GOOGLE_MAPS_API_KEY", "Google Maps API-ключ", "string", "", "Станции",
                "Опционально: ключ Google Maps Elevation API. Если задан — высота определяется "
                "сначала через Google Maps, иначе используется бесплатный Open-Meteo."),
+    SettingDef("YANDEX_WEATHER_API_KEY", "API-ключ Яндекс.Погоды", "string", "", "Станции",
+               "Ключ тарифа «Погода на вашем сайте» (https://yandex.ru/dev/weather). "
+               "Нужны также координаты станции выше. Пусто — блок Яндекс.Погоды выключен."),
+    SettingDef("YANDEX_WEATHER_REFRESH_MINUTES", "Интервал обновления Яндекс.Погоды (мин)", "int", "90", "Станции",
+               "Не чаще этого интервала выполняется запрос к API (лимиты бесплатного тарифа: "
+               "30 запросов/сутки, 1000/месяц). 90 минут ~ 16 запросов/сутки."),
+
+    # ----- Служебные (скрытые из админки) -----
+    SettingDef("YANDEX_WEATHER_CACHE", "Кэш Яндекс.Погоды", "hidden", "", "Служебные",
+               "Сырой JSON последнего ответа API (для кэширования)."),
+    SettingDef("YANDEX_WEATHER_UPDATED_AT", "Время обновления кэша", "hidden", "", "Служебные",
+               "ISO-время последнего успешного запроса к API."),
 
     # ----- Пересылка -----
     SettingDef("FORWARD_RAW_ENABLED", "Пересылать сырые данные", "bool", "0", "Пересылка",
@@ -123,12 +135,18 @@ SETTINGS_BY_KEY: dict[str, SettingDef] = {s.key: s for s in SETTINGS_SCHEMA}
 
 
 def sections() -> list[str]:
-    """Список секций в порядке появления в схеме (без дубликатов)."""
+    """Список секций в порядке появления в схеме (без дубликатов).
+
+    Секции, в которых все поля скрытые (hidden), не показываются в админке.
+    """
     seen: list[str] = []
+    visible: set[str] = set()
     for s in SETTINGS_SCHEMA:
         if s.section not in seen:
             seen.append(s.section)
-    return seen
+        if s.type != "hidden":
+            visible.add(s.section)
+    return [name for name in seen if name in visible]
 
 
 # ---------- Cache ----------

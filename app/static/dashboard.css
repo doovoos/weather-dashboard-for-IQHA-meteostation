@@ -365,7 +365,14 @@ select.input {
 .metric-chart { height: 96px; margin-top: 10px; }
 .metric-chart svg { width: 100%; height: 100%; display: block; }
 
-/* Прогноз погоды (Замбретти) */
+/* Прогноз погоды (Замбретти + Яндекс.Погода) */
+.forecast-row {
+  display: grid;
+  grid-template-columns: 1fr 2fr;
+  gap: var(--gap);
+  margin-bottom: var(--gap);
+}
+@media (max-width: 980px) { .forecast-row { grid-template-columns: 1fr; } }
 .forecast-body { padding: 2px 0; }
 .forecast-text {
   font-size: 22px;
@@ -374,6 +381,17 @@ select.input {
   margin-bottom: 6px;
   color: var(--ink);
 }
+.forecast-card-zambretti .forecast-text { font-size: 18px; }
+.yw-parts {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  gap: var(--gap);
+  margin-top: 12px;
+  padding-top: 10px;
+  border-top: 1px solid var(--grid);
+}
+.yw-part-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
+.yw-part .big { font-size: 18px; }
 .metric-chart.placeholder {
   display: flex; align-items: center; justify-content: center;
   color: var(--muted); font-size: 11px;

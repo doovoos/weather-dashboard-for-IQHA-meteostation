@@ -11,7 +11,7 @@
         <div class="card-title">{{ section }}</div>
       </div>
       <div class="form-grid">
-        {% for spec in schema if spec.section == section %}
+        {% for spec in schema if spec.section == section and spec.type != "hidden" %}
           <div class="form-row">
             <label for="f-{{ spec.key }}" class="form-label">
               <span class="form-label-text">{{ spec.label }}</span>

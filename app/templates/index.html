@@ -54,27 +54,71 @@
     </div>
   </header>
 
-  {# ---------- Прогноз погоды (Замбретти) ---------- #}
-  <div class="card" style="margin-bottom: var(--gap);">
-    <div class="card-head">
-      <div class="card-title">Прогноз погоды</div>
-      <span class="card-code">метод Замбретти</span>
-    </div>
-    {% if forecast and forecast.available %}
-    <div class="forecast-body">
-      <div class="forecast-text">{{ forecast.text }}</div>
-      <div class="trend muted">
-        Давление {{ "%.0f"|format(forecast.pressure_sea_level_hpa) }} гПа ·
-        за 3 ч {{ "%+.1f"|format(forecast.delta3h_hpa) }} гПа ({{ forecast.trend_label }}){% if forecast.wind_dir_deg is not none %} ·
-        ветер {{ "%.0f"|format(forecast.wind_dir_deg) }}°{% endif %}
+  {# ---------- Прогноз погоды: Замбретти (1/3) + Яндекс.Погода (2/3) ---------- #}
+  <div class="forecast-row">
+
+    <div class="card forecast-card-zambretti">
+      <div class="card-head">
+        <div class="card-title">Прогноз погоды</div>
+        <span class="card-code">метод Замбретти</span>
       </div>
+      {% if forecast and forecast.available %}
+      <div class="forecast-body">
+        <div class="forecast-text">{{ forecast.text }}</div>
+        <div class="trend muted">
+          Давление {{ "%.0f"|format(forecast.pressure_sea_level_hpa) }} гПа ·
+          за 3 ч {{ "%+.1f"|format(forecast.delta3h_hpa) }} гПа ({{ forecast.trend_label }}){% if forecast.wind_dir_deg is not none %} ·
+          ветер {{ "%.0f"|format(forecast.wind_dir_deg) }}°{% endif %}
+        </div>
+      </div>
+      {% else %}
+      <div class="forecast-body">
+        <div class="forecast-text muted">Прогноз пока недоступен — не хватает данных: недостаточно данных для устойчивого прогноза.</div>
+        <div class="trend muted">Для расчёта нужна история давления за 2–3 часа.</div>
+      </div>
+      {% endif %}
+      <div class="trend muted">Краткосрочный прогноз на ближайшие 12–24 часа.</div>
     </div>
-    {% else %}
-    <div class="forecast-body">
-      <div class="forecast-text muted">Прогноз пока недоступен — не хватает данных: недостаточно данных для устойчивого прогноза.</div>
-      <div class="trend muted">Для расчёта нужна история давления за 2–3 часа.</div>
+
+    <div class="card forecast-card-yandex">
+      <div class="card-head">
+        <div class="card-title">Прогноз погоды</div>
+        <span class="card-code">Яндекс.Погода{% if yandex_weather and yandex_weather.get('updated_local') %} · {{ yandex_weather.updated_local }}{% endif %}</span>
+      </div>
+      {% if yandex_weather and yandex_weather.available %}
+      <div class="forecast-body">
+        <div class="yw-fact">
+          <div class="forecast-text">
+            Сейчас {{ yandex_weather.fact.temp }}° · {{ yandex_weather.fact.condition }}
+          </div>
+          <div class="trend muted">
+            ощущается как {{ yandex_weather.fact.feels_like }}° ·
+            ветер {{ yandex_weather.fact.wind_speed }} м/с ({{ yandex_weather.fact.wind_dir }}) ·
+            влажность {{ yandex_weather.fact.humidity }}%
+          </div>
+        </div>
+        {% if yandex_weather.forecast.parts %}
+        <div class="yw-parts">
+          {% for part in yandex_weather.forecast.parts %}
+          <div class="yw-part">
+            <div class="yw-part-title muted">{{ part.part_label }}</div>
+            <div class="mono big">{{ part.temp_min }}…{{ part.temp_max }}°</div>
+            <div class="small">{{ part.condition }}</div>
+            {% if part.prec_prob %}<div class="small muted">осадки {{ part.prec_prob }}%</div>{% endif %}
+          </div>
+          {% endfor %}
+        </div>
+        {% endif %}
+        {% if yandex_weather.stale %}<div class="trend muted">Данные могли устареть — не удалось обновить.</div>{% endif %}
+      </div>
+      {% else %}
+      <div class="forecast-body">
+        <div class="forecast-text muted">Прогноз Яндекс.Погоды недоступен.</div>
+        <div class="trend muted">Укажите API-ключ и координаты станции в настройках (/admin/settings).</div>
+      </div>
+      {% endif %}
     </div>
-    {% endif %}
+
   </div>
 
   {% if not snapshot %}
