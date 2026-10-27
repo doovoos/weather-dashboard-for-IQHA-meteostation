@@ -1,50 +1,57 @@
 {% extends "admin/_layout.html" %}
 {% block admin_title %}Настройки{% endblock %}
 {% block admin_heading %}Настройки{% endblock %}
-{% block admin_sub %}Эти значения хранятся в БД (таблица <span class="mono">app_settings</span>) и применяются сразу после сохранения. Перезапуск не требуется.{% endblock %}
+{% block admin_sub %}Значения хранятся в БД (таблица <span class="mono">app_settings</span>) и применяются сразу после сохранения. Перезапуск не требуется.{% endblock %}
 
 {% block admin_content %}
-<form method="post" action="/admin/settings" class="admin-form">
+<nav class="settings-toc" aria-label="Разделы настроек">
   {% for section in sections %}
-    <div class="card mb-16">
-      <div class="card-head">
-        <div class="card-title">{{ section }}</div>
-      </div>
-      <div class="form-grid">
-        {% for spec in schema if spec.section == section and spec.type != "hidden" %}
-          <div class="form-row">
-            <label for="f-{{ spec.key }}" class="form-label">
-              <span class="form-label-text">{{ spec.label }}</span>
-              <span class="mono small muted">{{ spec.key }}</span>
-            </label>
-            <div class="form-input-wrap">
-              {% if spec.type == "bool" %}
-                <label class="switch">
-                  <input id="f-{{ spec.key }}" type="checkbox" name="{{ spec.key }}" value="1"
-                    {% if values[spec.key] in ("1","true","yes","on","y","да") %}checked{% endif %}>
-                  <span class="switch-track"><span class="switch-thumb"></span></span>
-                </label>
-              {% else %}
-                <input id="f-{{ spec.key }}" class="input mono"
-                       type="{{ 'number' if spec.type == 'int' else 'text' }}"
-                       name="{{ spec.key }}"
-                       value="{{ values[spec.key] }}">
-                {% if spec.key == 'STATION_GROUND_ELEVATION_M' %}
-                <button type="button" class="btn" id="elevation-lookup-btn" style="margin-top:6px;">
-                  Определить по координатам
-                </button>
-                <div id="elevation-lookup-status" class="form-help"></div>
-                {% endif %}
+  <a class="settings-toc-link" href="#settings-section-{{ loop.index }}" data-target="settings-section-{{ loop.index }}">{{ section }}</a>
+  {% endfor %}
+</nav>
+
+<form method="post" action="/admin/settings" class="admin-form" id="settings-form">
+  {% for section in sections %}
+  <details class="card settings-section" id="settings-section-{{ loop.index }}" {% if loop.first %}open{% endif %}>
+    <summary>
+      <span class="card-title">{{ section }}</span>
+      <span class="settings-section-count muted small">{{ schema | selectattr("section", "equalto", section) | selectattr("type", "ne", "hidden") | list | length }}</span>
+    </summary>
+    <div class="form-grid">
+      {% for spec in schema if spec.section == section and spec.type != "hidden" %}
+        <div class="form-row">
+          <label for="f-{{ spec.key }}" class="form-label">
+            <span class="form-label-text">{{ spec.label }}</span>
+            <span class="mono small muted">{{ spec.key }}</span>
+          </label>
+          <div class="form-input-wrap">
+            {% if spec.type == "bool" %}
+              <label class="switch">
+                <input id="f-{{ spec.key }}" type="checkbox" name="{{ spec.key }}" value="1"
+                  {% if values[spec.key] in ("1","true","yes","on","y","да") %}checked{% endif %}>
+                <span class="switch-track"><span class="switch-thumb"></span></span>
+              </label>
+            {% else %}
+              <input id="f-{{ spec.key }}" class="input mono"
+                     type="{{ 'number' if spec.type == 'int' else 'text' }}"
+                     name="{{ spec.key }}"
+                     value="{{ values[spec.key] }}">
+              {% if spec.key == 'STATION_GROUND_ELEVATION_M' %}
+              <button type="button" class="btn" id="elevation-lookup-btn" style="margin-top:6px;">
+                Определить по координатам
+              </button>
+              <div id="elevation-lookup-status" class="form-help"></div>
               {% endif %}
-              {% if spec.help %}<div class="form-help">{{ spec.help }}</div>{% endif %}
-            </div>
+            {% endif %}
+            {% if spec.help %}<div class="form-help">{{ spec.help }}</div>{% endif %}
           </div>
-        {% endfor %}
-      </div>
+        </div>
+      {% endfor %}
     </div>
+  </details>
   {% endfor %}
 
-  <div class="form-actions">
+  <div class="form-actions settings-actions">
     <button type="submit" class="btn btn-primary">Сохранить</button>
     <a href="/admin/settings" class="btn">Отмена</a>
   </div>
@@ -52,14 +59,23 @@
 
 <script>
 (function () {
-  const btn = document.getElementById("elevation-lookup-btn");
+  // Оглавление: открывает соответствующую секцию и прокручивает к ней
+  document.querySelectorAll(".settings-toc-link").forEach(function (link) {
+    link.addEventListener("click", function () {
+      var target = document.getElementById(link.dataset.target);
+      if (target && !target.open) target.open = true;
+    });
+  });
+
+  // Кнопка автоопределения высоты (Google/Open-Meteo Elevation API)
+  var btn = document.getElementById("elevation-lookup-btn");
   if (!btn) return;
-  const statusEl = document.getElementById("elevation-lookup-status");
-  const elevInput = document.getElementById("f-STATION_GROUND_ELEVATION_M");
+  var statusEl = document.getElementById("elevation-lookup-status");
+  var elevInput = document.getElementById("f-STATION_GROUND_ELEVATION_M");
 
   btn.addEventListener("click", async function () {
-    const lat = (document.getElementById("f-STATION_LATITUDE")?.value || "").trim().replace(",", ".");
-    const lon = (document.getElementById("f-STATION_LONGITUDE")?.value || "").trim().replace(",", ".");
+    var lat = (document.getElementById("f-STATION_LATITUDE")?.value || "").trim().replace(",", ".");
+    var lon = (document.getElementById("f-STATION_LONGITUDE")?.value || "").trim().replace(",", ".");
     if (!lat || !lon) {
       statusEl.textContent = "Сначала заполните широту и долготу станции выше.";
       return;
@@ -67,15 +83,15 @@
     btn.disabled = true;
     statusEl.textContent = "Определяем высоту…";
     try {
-      const resp = await fetch("/admin/elevation-lookup", {
+      var resp = await fetch("/admin/elevation-lookup", {
         method: "POST",
         headers: { "Content-Type": "application/json" },
         body: JSON.stringify({ latitude: lat, longitude: lon }),
       });
-      const data = await resp.json();
+      var data = await resp.json();
       if (resp.ok && data.ok) {
         elevInput.value = Math.round(data.elevation);
-        const src = data.source === "google" ? "Google Maps Elevation API" : "Open-Meteo Elevation API";
+        var src = data.source === "google" ? "Google Maps Elevation API" : "Open-Meteo Elevation API";
         statusEl.textContent = "Высота определена (" + src + "): " + data.elevation + " м. Не забудьте сохранить форму.";
       } else {
         statusEl.textContent = data.detail || "Не удалось определить высоту.";
