@@ -426,6 +426,7 @@ def admin_settings_get(
         {
             "schema": list(settings.SETTINGS_SCHEMA),
             "sections": settings.sections(),
+            "section_descriptions": settings.SECTION_DESCRIPTIONS,
             "values": settings.all_values(conn=conn),
             "flash": flash,
         },

@@ -14,7 +14,10 @@
   {% for section in sections %}
   <details class="card settings-section" id="settings-section-{{ loop.index }}" {% if loop.first %}open{% endif %}>
     <summary>
-      <span class="card-title">{{ section }}</span>
+      <span class="settings-section-head">
+        <span class="card-title">{{ section }}</span>
+        <span class="settings-section-desc muted">{{ section_descriptions.get(section, "") }}</span>
+      </span>
       <span class="settings-section-count muted small">{{ schema | selectattr("section", "equalto", section) | selectattr("type", "ne", "hidden") | list | length }}</span>
     </summary>
     <div class="form-grid">

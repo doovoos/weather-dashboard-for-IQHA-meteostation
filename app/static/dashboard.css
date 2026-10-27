@@ -721,6 +721,21 @@ details.settings-section summary {
   scroll-margin-top: 90px;
 }
 details.settings-section summary::-webkit-details-marker { display: none; }
+.settings-section-head {
+  display: flex;
+  align-items: baseline;
+  gap: 12px;
+  min-width: 0;
+  flex: 1;
+}
+.settings-section-head .card-title { flex: none; }
+.settings-section-desc {
+  font-size: 12px;
+  white-space: nowrap;
+  overflow: hidden;
+  text-overflow: ellipsis;
+  min-width: 0;
+}
 details.settings-section summary::after {
   content: "+";
   font-size: 18px;
