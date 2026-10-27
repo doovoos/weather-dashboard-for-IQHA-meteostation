@@ -60,6 +60,30 @@ PART_BUCKETS = (
     ("day", "днём", 12, 17),
     ("evening", "вечером", 18, 23),
 )
+# Хронологический порядок частей суток (для сортировки прогноза)
+PART_ORDER = {"night": 0, "morning": 1, "day": 2, "evening": 3}
+
+# Иконки состояний погоды (по коду условия)
+CONDITION_ICON: dict[str, str] = {
+    "CLEAR": "☀️",
+    "PARTLY_CLOUDY": "⛅",
+    "CLOUDY": "☁️",
+    "OVERCAST": "☁️",
+    "LIGHT_RAIN": "🌦️",
+    "RAIN": "🌧️",
+    "HEAVY_RAIN": "🌧️",
+    "SHOWERS": "⛈️",
+    "WET_SNOW": "🌨️",
+    "LIGHT_SNOW": "🌨️",
+    "SNOW": "❄️",
+    "SNOW_SHOWERS": "❄️",
+    "HAIL": "🌨️",
+    "THUNDERSTORM": "⛈️",
+    "THUNDERSTORM_WITH_RAIN": "⛈️",
+    "THUNDERSTORM_WITH_HAIL": "⛈️",
+    "FOG": "🌫️",
+    "MIST": "🌫️",
+}
 
 CONDITION_RU: dict[str, str] = {
     "CLEAR": "ясно",
@@ -104,6 +128,12 @@ def _wind_dir(code: str | None) -> str:
     return WIND_DIR_RU.get(normalized, code)
 
 
+def _condition_icon(code: str | None) -> str:
+    if not code:
+        return ""
+    return CONDITION_ICON.get(code.upper().replace("-", "_"), "")
+
+
 def _to_local(dt: datetime) -> datetime:
     from .db import to_local_timestamp
     return to_local_timestamp(dt.astimezone(UTC).isoformat())
@@ -118,6 +148,7 @@ def _parse_response(raw: dict[str, Any], fetched_at: datetime | None = None) -> 
         "temp": now.get("temperature"),
         "feels_like": now.get("feelsLike"),
         "condition": _condition(now.get("condition")),
+        "icon": _condition_icon(now.get("condition")),
         "wind_speed": now.get("windSpeed"),
         "wind_dir": _wind_dir(now.get("windDirection")),
     }
@@ -149,7 +180,7 @@ def _parse_response(raw: dict[str, Any], fetched_at: datetime | None = None) -> 
             continue
         bucket = buckets.setdefault(
             key,
-            {"part_key": key[0], "part_label": key[1],
+            {"part_key": key[0], "part_name": name, "part_label": key[1],
              "temps": [], "conditions": [], "wind": 0.0},
         )
         if hour.get("temperature") is not None:
@@ -162,14 +193,22 @@ def _parse_response(raw: dict[str, Any], fetched_at: datetime | None = None) -> 
             pass
 
     parts = []
-    for (part_key, part_label), bucket in sorted(buckets.items(), key=lambda kv: kv[0][0]):
+    # Хронологический порядок: по дате, затем ночь -> утро -> день -> вечер
+    for (_, _), bucket in sorted(
+        buckets.items(),
+        key=lambda kv: (kv[0][0].rsplit(" ", 1)[0], PART_ORDER.get(kv[0][0].rsplit(" ", 1)[1], 0)),
+    ):
+        dominant_condition = (
+            Counter(bucket["conditions"]).most_common(1)[0][0]
+            if bucket["conditions"] else None
+        )
         parts.append({
-            "part_name": part_key.split()[-1],
-            "part_label": part_label,
+            "part_name": bucket["part_name"],
+            "part_label": bucket["part_label"],
             "temp_min": int(min(bucket["temps"])) if bucket["temps"] else None,
             "temp_max": int(max(bucket["temps"])) if bucket["temps"] else None,
-            "condition": _condition(Counter(bucket["conditions"]).most_common(1)[0][0])
-                         if bucket["conditions"] else "—",
+            "condition": _condition(dominant_condition),
+            "icon": _condition_icon(dominant_condition),
             "wind_speed": round(bucket["wind"], 1) if bucket["wind"] else None,
         })
 

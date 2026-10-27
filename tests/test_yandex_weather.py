@@ -68,6 +68,7 @@ def main() -> None:
     assert result["available"] is True
     assert result["fact"]["temp"] == 6
     assert result["fact"]["condition"] == "пасмурно"
+    assert result["fact"]["icon"] == "☁️"
     assert result["fact"]["wind_dir"] == "СВ"
     assert result["fact"]["feels_like"] == 4
     parts = result["forecast"]["parts"]
@@ -77,6 +78,12 @@ def main() -> None:
     for p in parts:
         assert p["temp_min"] <= p["temp_max"]
         assert p["condition"] in ("пасмурно", "небольшой дождь")
+        assert p["icon"] in ("☁️", "🌦️")
+    # Хронологический порядок частей суток: ночь -> утро -> день -> вечер
+    order = {l.split()[-1]: i for i, l in enumerate(["ночью", "утром", "днём", "вечером"])}
+    for a, b in zip(labels, labels[1:]):
+        if a.split()[0] == b.split()[0]:  # один и тот же день
+            assert order[a.split()[-1]] < order[b.split()[-1]], f"не хронологично: {a} -> {b}"
     assert result["updated_local"] is not None
 
     # 3. Кэш свежий -> без запроса к API

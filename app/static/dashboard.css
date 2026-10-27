@@ -384,14 +384,18 @@ select.input {
 .forecast-card-zambretti .forecast-text { font-size: 18px; }
 .yw-parts {
   display: grid;
-  grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+  grid-template-columns: repeat(6, 1fr);
   gap: var(--gap);
   margin-top: 12px;
   padding-top: 10px;
   border-top: 1px solid var(--grid);
 }
-.yw-part-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; }
-.yw-part .big { font-size: 18px; }
+@media (max-width: 768px) {
+  .yw-parts { grid-template-columns: repeat(2, 1fr); }
+}
+.yw-part-title { font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; margin-bottom: 4px; white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
+.yw-part .big { font-size: 18px; white-space: nowrap; }
+.yw-part .small { white-space: nowrap; overflow: hidden; text-overflow: ellipsis; }
 .metric-chart.placeholder {
   display: flex; align-items: center; justify-content: center;
   color: var(--muted); font-size: 11px;
