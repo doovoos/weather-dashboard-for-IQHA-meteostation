@@ -124,6 +124,23 @@ def _fetch(api_key: str, lat: str, lon: str) -> dict[str, Any]:
         return json.loads(response.read().decode("utf-8"))
 
 
+def _describe_fetch_error(err: Exception) -> str:
+    """Человекочитаемое описание ошибки запроса к API."""
+    if isinstance(err, urllib.error.HTTPError):
+        detail = ""
+        try:
+            body = err.read(512).decode("utf-8", errors="replace")
+            try:
+                parsed = json.loads(body)
+                detail = str(parsed.get("message") or parsed.get("detail") or body)
+            except (json.JSONDecodeError, AttributeError):
+                detail = body
+        except Exception:
+            detail = err.reason or ""
+        return f"HTTP {err.code}" + (f": {detail}" if detail else "")
+    return str(err)
+
+
 def _load_cache(conn: sqlite3.Connection | None) -> tuple[dict[str, Any] | None, datetime | None]:
     raw = (app_settings.get_string("YANDEX_WEATHER_CACHE", conn=conn) or "").strip()
     updated_raw = (app_settings.get_string("YANDEX_WEATHER_UPDATED_AT", conn=conn) or "").strip()
@@ -150,8 +167,13 @@ def _save_cache(raw: dict[str, Any], conn: sqlite3.Connection | None) -> None:
 def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None:
     """Погода Яндекс с кэшированием.
 
-    Возвращает структуру для UI либо None (не настроено / нет данных
-    и получить не удалось). Ошибки сети не бросает.
+    Контракт возвращаемого значения:
+    - None — не настроено (нет ключа или координат): блок скрывается целиком;
+    - {"available": True, ...} — данные есть (из кэша или свежий запрос);
+    - {"available": False, "detail": "..."} — настроено, но данных пока нет
+      (первая загрузка не удалась): показываем «ещё загружается» с причиной.
+
+    Ошибки сети не бросает.
     """
     api_key = (app_settings.get_string("YANDEX_WEATHER_API_KEY", conn=conn) or "").strip()
     lat = (app_settings.get_string("STATION_LATITUDE", conn=conn) or "").strip().replace(",", ".")
@@ -169,6 +191,7 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
             result["stale"] = False
             return result
 
+    fetch_error: str | None = None
     try:
         raw = _fetch(api_key, lat, lon)
         _save_cache(raw, conn=conn)
@@ -176,11 +199,12 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
         result["stale"] = False
         return result
     except Exception as err:
-        logger.warning("Yandex.Weather fetch failed: {}", err)
+        fetch_error = _describe_fetch_error(err)
+        logger.warning("Yandex.Weather fetch failed: {}", fetch_error)
 
     # Не удалось обновить — отдаём устаревший кэш, если есть
     if cached_raw is not None:
         result = _parse_response(cached_raw)
         result["stale"] = True
         return result
-    return None
+    return {"available": False, "detail": fetch_error}

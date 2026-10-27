@@ -55,11 +55,13 @@ def main() -> None:
     app_settings.set_value("STATION_LATITUDE", "55.75", conn=conn)
     app_settings.set_value("STATION_LONGITUDE", "37.62", conn=conn)
 
-    # 2. Нет кэша, fetch не подменён (реальный вызов не делаем — подменяем)
-    #    Подменяем _fetch на ошибку: без кэша -> None
+    # 2. Настроено, но без кэша и API недоступен -> "ещё загружается" с причиной
     original_fetch = yandex_weather._fetch
     yandex_weather._fetch = lambda *a, **k: (_ for _ in ()).throw(OSError("network down"))
-    assert yandex_weather.get_weather(conn=conn) is None
+    result = yandex_weather.get_weather(conn=conn)
+    assert result is not None, "настроенный блок должен существовать"
+    assert result["available"] is False
+    assert "network down" in result["detail"]
 
     # 3. Кэш свежий -> отдаётся без запроса к API
     yandex_weather._save_cache(SAMPLE, conn=conn)
@@ -88,7 +90,13 @@ def main() -> None:
     result = yandex_weather.get_weather(conn=conn)
     assert result is not None and result["stale"] is False
 
-    # 6. Русские переводы покрывают все коды условия
+    # 6. HTTP-ошибка API описывается читаемо
+    import urllib.error
+    err = urllib.error.HTTPError(url="", code=403, msg="Forbidden",
+                                 hdrs=None, fp=None)
+    assert "403" in yandex_weather._describe_fetch_error(err)
+
+    # 7. Русские переводы покрывают все коды условия
     for code in ["clear", "partly-cloudy", "cloudy", "overcast", "light-rain", "rain",
                  "heavy-rain", "showers", "wet-snow", "light-snow", "snow", "snow-showers",
                  "hail", "thunderstorm", "thunderstorm-with-rain", "thunderstorm-with-hail"]:
