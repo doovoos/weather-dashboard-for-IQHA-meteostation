@@ -93,8 +93,7 @@
           </div>
           <div class="trend muted">
             ощущается как {{ yandex_weather.fact.feels_like }}° ·
-            ветер {{ yandex_weather.fact.wind_speed }} м/с ({{ yandex_weather.fact.wind_dir }}) ·
-            влажность {{ yandex_weather.fact.humidity }}%
+            ветер {{ yandex_weather.fact.wind_speed }} м/с ({{ yandex_weather.fact.wind_dir }})
           </div>
         </div>
         {% if yandex_weather.forecast.parts %}
@@ -104,7 +103,7 @@
             <div class="yw-part-title muted">{{ part.part_label }}</div>
             <div class="mono big">{{ part.temp_min }}…{{ part.temp_max }}°</div>
             <div class="small">{{ part.condition }}</div>
-            {% if part.prec_prob %}<div class="small muted">осадки {{ part.prec_prob }}%</div>{% endif %}
+            {% if part.wind_speed %}<div class="small muted">ветер до {{ part.wind_speed }} м/с</div>{% endif %}
           </div>
           {% endfor %}
         </div>

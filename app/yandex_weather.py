@@ -1,11 +1,14 @@
-"""Интеграция с API Яндекс.Погоды (тариф «Погода на вашем сайте»).
+"""Интеграция с API Яндекс Погоды (GraphQL, тариф «Умный дом»).
 
-GET https://api.weather.yandex.ru/v2/informers?lat=..&lon=..&lang=ru_RU
+POST https://api.weather.yandex.ru/graphql/query
 Заголовок: X-Yandex-Weather-Key: <ключ>
 
-Ограничения бесплатного тарифа: горизонт 48 часов, 30 запросов/сутки,
-1000 запросов/месяц. Поэтому ответ кэшируется в БД и обновляется не чаще
-раз в YANDEX_WEATHER_REFRESH_MINUTES (по умолчанию 90 минут -> ~16 запросов/сутки).
+Бесплатный тариф «Умный дом» даёт: температуру, «ощущается как»,
+скорость ветра и общие погодные условия (облачность/осадки).
+Горизонт прогноза — 48 часов, лимиты: 30 запросов/сутки, 1000/месяц.
+Ответ кэшируется в БД и обновляется не чаще раза в
+YANDEX_WEATHER_REFRESH_MINUTES (по умолчанию 90 минут -> ~16 запросов/сутки),
+при ошибках повторы приостанавливаются на YANDEX_WEATHER_ERROR_RETRY_MINUTES.
 """
 from __future__ import annotations
 
@@ -13,119 +16,197 @@ import json
 import sqlite3
 import urllib.error
 import urllib.request
-from datetime import UTC, datetime
+from collections import Counter
+from datetime import UTC, datetime, timedelta
 from typing import Any
 
 from loguru import logger
 
 from . import settings as app_settings
 
-API_URL = "https://api.weather.yandex.ru/v2/informers"
+API_URL = "https://api.weather.yandex.ru/graphql/query"
+
+# Запрос в рамках бесплатного тарифа: температура, ощущается как, ветер, условие
+FORECAST_QUERY = """
+{
+  weatherByPoint(request: { lat: %s, lon: %s }) {
+    now {
+      temperature
+      feelsLike
+      windSpeed
+      windDirection
+      condition
+    }
+    forecast {
+      days(limit: 2) {
+        hours {
+          time
+          temperature
+          feelsLike
+          windSpeed
+          windDirection
+          condition
+        }
+      }
+    }
+  }
+}
+"""
+
+# Прогноз агрегируем по частям суток: границы в часах локального времени
+PART_BUCKETS = (
+    ("night", "ночью", 0, 5),
+    ("morning", "утром", 6, 11),
+    ("day", "днём", 12, 17),
+    ("evening", "вечером", 18, 23),
+)
 
 CONDITION_RU: dict[str, str] = {
-    "clear": "ясно",
-    "partly-cloudy": "малооблачно",
-    "cloudy": "облачно с прояснениями",
-    "overcast": "пасмурно",
-    "light-rain": "небольшой дождь",
-    "rain": "дождь",
-    "heavy-rain": "сильный дождь",
-    "showers": "ливень",
-    "wet-snow": "дождь со снегом",
-    "light-snow": "небольшой снег",
-    "snow": "снег",
-    "snow-showers": "снегопад",
-    "hail": "град",
-    "thunderstorm": "гроза",
-    "thunderstorm-with-rain": "дождь с грозой",
-    "thunderstorm-with-hail": "гроза с градом",
+    "CLEAR": "ясно",
+    "PARTLY_CLOUDY": "малооблачно",
+    "CLOUDY": "облачно с прояснениями",
+    "OVERCAST": "пасмурно",
+    "LIGHT_RAIN": "небольшой дождь",
+    "RAIN": "дождь",
+    "HEAVY_RAIN": "сильный дождь",
+    "SHOWERS": "ливень",
+    "WET_SNOW": "дождь со снегом",
+    "LIGHT_SNOW": "небольшой снег",
+    "SNOW": "снег",
+    "SNOW_SHOWERS": "снегопад",
+    "HAIL": "град",
+    "THUNDERSTORM": "гроза",
+    "THUNDERSTORM_WITH_RAIN": "дождь с грозой",
+    "THUNDERSTORM_WITH_HAIL": "гроза с градом",
+    "FOG": "туман",
+    "MIST": "дымка",
 }
 
 WIND_DIR_RU: dict[str, str] = {
-    "nw": "СЗ", "n": "С", "ne": "СВ", "e": "В",
-    "se": "ЮВ", "s": "Ю", "sw": "ЮЗ", "w": "З", "c": "штиль",
-}
-
-PART_RU: dict[str, str] = {
-    "night": "ночью",
-    "morning": "утром",
-    "day": "днём",
-    "evening": "вечером",
+    "NORTH_WEST": "СЗ", "NORTH": "С", "NORTH_EAST": "СВ", "EAST": "В",
+    "SOUTH_EAST": "ЮВ", "SOUTH": "Ю", "SOUTH_WEST": "ЮЗ", "WEST": "З",
+    "CALM": "штиль",
 }
 
 
 def _condition(code: str | None) -> str:
     if not code:
         return "—"
-    return CONDITION_RU.get(code, code)
+    # GraphQL отдаёт enum ("OVERCAST"), старый API — kebab-case ("overcast")
+    normalized = code.upper().replace("-", "_")
+    return CONDITION_RU.get(normalized, code)
 
 
 def _wind_dir(code: str | None) -> str:
     if not code:
         return "—"
-    return WIND_DIR_RU.get(code, code)
+    normalized = code.upper().replace("-", "_")
+    return WIND_DIR_RU.get(normalized, code)
 
 
-def _parse_response(raw: dict[str, Any]) -> dict[str, Any]:
-    """Компактная структура для UI из сырого ответа API."""
-    fact = raw.get("fact") or {}
-    forecast = raw.get("forecast") or {}
+def _to_local(dt: datetime) -> datetime:
+    from .db import to_local_timestamp
+    return to_local_timestamp(dt.astimezone(UTC).isoformat())
+
+
+def _parse_response(raw: dict[str, Any], fetched_at: datetime | None = None) -> dict[str, Any]:
+    """Компактная структура для UI из ответа GraphQL API."""
+    point = raw.get("data", {}).get("weatherByPoint") or {}
+    now = point.get("now") or {}
+
+    fact = {
+        "temp": now.get("temperature"),
+        "feels_like": now.get("feelsLike"),
+        "condition": _condition(now.get("condition")),
+        "wind_speed": now.get("windSpeed"),
+        "wind_dir": _wind_dir(now.get("windDirection")),
+    }
+
+    # Почасовой прогноз -> агрегация по частям суток (сегодня/завтра)
+    hours: list[dict[str, Any]] = []
+    for day in (point.get("forecast") or {}).get("days") or []:
+        hours.extend(day.get("hours") or [])
+
+    now_local = datetime.now(UTC)
+    buckets: dict[tuple[str, str], dict[str, Any]] = {}
+    for hour in hours:
+        try:
+            t = datetime.fromisoformat(hour["time"].replace("Z", "+00:00"))
+        except (KeyError, ValueError):
+            continue
+        if t <= now_local:
+            continue  # только будущее
+        if t > now_local + timedelta(hours=48):
+            continue
+        t_local = _to_local(t)
+        date_label = "сегодня" if t_local.date() == _to_local(now_local).date() else "завтра"
+        hour_num = t_local.hour
+        for name, label, lo, hi in PART_BUCKETS:
+            if lo <= hour_num <= hi:
+                key = (t_local.date().isoformat() + " " + name, f"{date_label} {label}")
+                break
+        else:
+            continue
+        bucket = buckets.setdefault(
+            key,
+            {"part_key": key[0], "part_label": key[1],
+             "temps": [], "conditions": [], "wind": 0.0},
+        )
+        if hour.get("temperature") is not None:
+            bucket["temps"].append(float(hour["temperature"]))
+        if hour.get("condition"):
+            bucket["conditions"].append(hour["condition"])
+        try:
+            bucket["wind"] = max(bucket["wind"], float(hour.get("windSpeed") or 0))
+        except (TypeError, ValueError):
+            pass
+
     parts = []
-    for part in forecast.get("parts") or []:
+    for (part_key, part_label), bucket in sorted(buckets.items(), key=lambda kv: kv[0][0]):
         parts.append({
-            "part_name": part.get("part_name"),
-            "part_label": PART_RU.get(part.get("part_name"), part.get("part_name", "")),
-            "temp_min": part.get("temp_min"),
-            "temp_max": part.get("temp_max"),
-            "feels_like": part.get("feels_like"),
-            "condition": _condition(part.get("condition")),
-            "wind_speed": part.get("wind_speed"),
-            "prec_mm": part.get("prec_mm"),
-            "prec_prob": part.get("prec_prob"),
+            "part_name": part_key.split()[-1],
+            "part_label": part_label,
+            "temp_min": int(min(bucket["temps"])) if bucket["temps"] else None,
+            "temp_max": int(max(bucket["temps"])) if bucket["temps"] else None,
+            "condition": _condition(Counter(bucket["conditions"]).most_common(1)[0][0])
+                         if bucket["conditions"] else "—",
+            "wind_speed": round(bucket["wind"], 1) if bucket["wind"] else None,
         })
-    now_dt = raw.get("now_dt")
-    updated = None
+
     updated_local = None
-    if now_dt:
+    if fetched_at is not None:
         try:
-            updated = datetime.fromisoformat(now_dt.replace("Z", "+00:00")).astimezone(UTC)
-        except ValueError:
-            updated = None
-    if updated is not None:
-        try:
-            from .db import to_local_timestamp
-            updated_local = to_local_timestamp(updated.isoformat()).strftime("%d.%m %H:%M")
+            updated_local = _to_local(fetched_at).strftime("%d.%m %H:%M")
         except Exception:
             updated_local = None
+
     return {
         "available": True,
-        "updated_utc": updated.isoformat() if updated else None,
+        "updated_utc": fetched_at.isoformat() if fetched_at else None,
         "updated_local": updated_local,
-        "fact": {
-            "temp": fact.get("temp"),
-            "feels_like": fact.get("feels_like"),
-            "condition": _condition(fact.get("condition")),
-            "wind_speed": fact.get("wind_speed"),
-            "wind_dir": _wind_dir(fact.get("wind_dir")),
-            "pressure_mm": fact.get("pressure_mm"),
-            "humidity": fact.get("humidity"),
-        },
-        "forecast": {
-            "date": forecast.get("date"),
-            "parts": parts,
-        },
+        "fact": fact,
+        "forecast": {"parts": parts},
     }
 
 
 def _fetch(api_key: str, lat: str, lon: str) -> dict[str, Any]:
-    url = f"{API_URL}?lat={lat}&lon={lon}&lang=ru_RU"
-    # Оба заголовка: свежие ключи — X-Yandex-Weather-Key, старые — X-Yandex-API-Key
-    request = urllib.request.Request(url, headers={
-        "X-Yandex-Weather-Key": api_key,
-        "X-Yandex-API-Key": api_key,
-    })
+    query = FORECAST_QUERY % (lat, lon)
+    request = urllib.request.Request(
+        API_URL,
+        data=json.dumps({"query": query}).encode("utf-8"),
+        method="POST",
+        headers={
+            "X-Yandex-Weather-Key": api_key,
+            "Content-Type": "application/json",
+        },
+    )
     with urllib.request.urlopen(request, timeout=10) as response:
-        return json.loads(response.read().decode("utf-8"))
+        payload = json.loads(response.read().decode("utf-8"))
+    if payload.get("errors"):
+        # GraphQL-ошибки (недоступные поля тарифа и т.п.) приходят с HTTP 200
+        messages = "; ".join(e.get("message", "?") for e in payload["errors"])
+        raise ValueError(f"GraphQL: {messages}")
+    return payload
 
 
 def _describe_fetch_error(err: Exception) -> str:
@@ -163,8 +244,8 @@ def _load_cache(conn: sqlite3.Connection | None) -> tuple[dict[str, Any] | None,
     return data, updated
 
 
-def _save_cache(raw: dict[str, Any], conn: sqlite3.Connection | None) -> None:
-    app_settings.set_value("YANDEX_WEATHER_CACHE", json.dumps(raw, ensure_ascii=False), conn=conn)
+def _save_cache(parsed: dict[str, Any], conn: sqlite3.Connection | None) -> None:
+    app_settings.set_value("YANDEX_WEATHER_CACHE", json.dumps(parsed, ensure_ascii=False), conn=conn)
     app_settings.set_value("YANDEX_WEATHER_UPDATED_AT", datetime.now(UTC).isoformat(), conn=conn)
     # Успех — сбрасываем маркеры ошибок
     app_settings.set_value("YANDEX_WEATHER_LAST_ERROR", "", conn=conn)
@@ -194,8 +275,7 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
     Контракт возвращаемого значения:
     - None — не настроено (нет ключа или координат): блок скрывается целиком;
     - {"available": True, ...} — данные есть (из кэша или свежий запрос);
-    - {"available": False, "detail": "..."} — настроено, но данных пока нет
-      (первая загрузка не удалась): показываем «ещё загружается» с причиной.
+    - {"available": False, "detail": "..."} — настроено, но данных пока нет.
 
     Ошибки сети не бросает.
     """
@@ -207,11 +287,11 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
     if not api_key or not lat or not lon:
         return None
 
-    cached_raw, updated = _load_cache(conn)
-    if cached_raw is not None and updated is not None:
+    cached, updated = _load_cache(conn)
+    if cached is not None and updated is not None:
         age_minutes = (datetime.now(UTC) - updated).total_seconds() / 60.0
         if age_minutes < refresh_minutes:
-            result = _parse_response(cached_raw)
+            result = dict(cached)
             result["stale"] = False
             return result
 
@@ -223,17 +303,20 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
         if since_error < error_retry_minutes:
             retry_in = int(error_retry_minutes - since_error)
             detail = f"{last_error} (повтор через {retry_in} мин)"
-            if cached_raw is not None:
-                result = _parse_response(cached_raw)
+            if cached is not None:
+                result = dict(cached)
                 result["stale"] = True
                 return result
             return {"available": False, "detail": detail}
 
     fetch_error: str | None = None
     try:
+        fetched_at = datetime.now(UTC)
         raw = _fetch(api_key, lat, lon)
-        _save_cache(raw, conn=conn)
-        result = _parse_response(raw)
+        result = _parse_response(raw, fetched_at)
+        if not result["forecast"]["parts"] and result["fact"]["temp"] is None:
+            raise ValueError("пустой ответ API")
+        _save_cache(result, conn=conn)
         result["stale"] = False
         return result
     except Exception as err:
@@ -242,8 +325,8 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
         _save_error_state(fetch_error, conn=conn)
 
     # Не удалось обновить — отдаём устаревший кэш, если есть
-    if cached_raw is not None:
-        result = _parse_response(cached_raw)
+    if cached is not None:
+        result = dict(cached)
         result["stale"] = True
         return result
     return {"available": False, "detail": fetch_error}

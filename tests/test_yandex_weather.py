@@ -1,4 +1,4 @@
-"""Tests for app.yandex_weather module."""
+"""Tests for app.yandex_weather module (GraphQL API)."""
 from __future__ import annotations
 
 import json
@@ -15,25 +15,32 @@ from app import settings as app_settings
 from app import yandex_weather
 
 
-SAMPLE = {
-    "now": 1470220206,
-    "now_dt": "2026-10-27T10:30:06Z",
-    "info": {"lat": 55.75, "lon": 37.62, "url": "https://yandex.ru/pogoda/moscow"},
-    "fact": {
-        "temp": 5, "feels_like": 3, "condition": "overcast",
-        "wind_speed": 3.2, "wind_dir": "nw", "pressure_mm": 748,
-        "pressure_pa": 997, "humidity": 66, "daytime": "d",
-    },
-    "forecast": {
-        "date": "2026-10-27",
-        "parts": [
-            {"part_name": "day", "temp_min": 5, "temp_max": 7, "temp_avg": 6,
-             "condition": "light-rain", "wind_speed": 3.5, "prec_mm": 0.5, "prec_prob": 70},
-            {"part_name": "evening", "temp_min": 2, "temp_max": 5, "temp_avg": 3,
-             "condition": "cloudy", "wind_speed": 2.0, "prec_mm": 0, "prec_prob": 10},
-        ],
-    },
-}
+def _hours(base: datetime, temps: list[int], condition: str = "OVERCAST") -> list[dict]:
+    return [
+        {"time": (base + timedelta(hours=i)).isoformat(),
+         "temperature": t, "feelsLike": t - 1, "windSpeed": 2.0 + i * 0.1,
+         "windDirection": "NORTH_EAST", "condition": condition}
+        for i, t in enumerate(temps)
+    ]
+
+
+def _sample() -> dict:
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
+    # Ближайшие 6 часов (останутся в прогнозе) + прошедшие 2 часа (отбрасываются)
+    day_hours = _hours(now - timedelta(hours=2), [5, 4, 5, 6, 7, 8, 9, 8], "OVERCAST")
+    tomorrow_hours = _hours(now + timedelta(hours=6), [3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8], "LIGHT_RAIN")
+    return {
+        "data": {
+            "weatherByPoint": {
+                "now": {"temperature": 6, "feelsLike": 4, "windSpeed": 3.2,
+                        "windDirection": "NORTH_EAST", "condition": "OVERCAST"},
+                "forecast": {"days": [
+                    {"hours": day_hours},
+                    {"hours": tomorrow_hours},
+                ]},
+            }
+        }
+    }
 
 
 def _create_test_db() -> sqlite3.Connection:
@@ -55,79 +62,69 @@ def main() -> None:
     app_settings.set_value("STATION_LATITUDE", "55.75", conn=conn)
     app_settings.set_value("STATION_LONGITUDE", "37.62", conn=conn)
 
-    # 2. Настроено, но без кэша и API недоступен -> "ещё загружается" с причиной
-    original_fetch = yandex_weather._fetch
-    yandex_weather._fetch = lambda *a, **k: (_ for _ in ()).throw(OSError("network down"))
-    result = yandex_weather.get_weather(conn=conn)
-    assert result is not None, "настроенный блок должен существовать"
-    assert result["available"] is False
-    assert "network down" in result["detail"]
-
-    # 2a. Повтор приостановлен: сразу после ошибки новый запрос не делается
-    call_count = {"n": 0}
-    def counting_fetch(*a, **k):
-        call_count["n"] += 1
-        raise OSError("should not be called")
-    yandex_weather._fetch = counting_fetch
-    result = yandex_weather.get_weather(conn=conn)
-    assert call_count["n"] == 0, "повтор не должен выполняться в паузе"
-    assert result["available"] is False
-    assert "network down" in result["detail"] and "повтор через" in result["detail"]
-
-    # 2b. После истечения паузы запрос выполняется снова
-    app_settings.set_value(
-        "YANDEX_WEATHER_LAST_ERROR_AT",
-        (datetime.now(UTC) - timedelta(minutes=60)).isoformat(),
-        conn=conn,
-    )
-    yandex_weather._fetch = lambda *a, **k: (_ for _ in ()).throw(OSError("still down"))
-    result = yandex_weather.get_weather(conn=conn)
-    assert result["available"] is False and "still down" in result["detail"]
-
-    # 3. Кэш свежий -> отдаётся без запроса к API (маркеры ошибки сброшены ранее нет — чистим)
-    app_settings.set_value("YANDEX_WEATHER_LAST_ERROR", "", conn=conn)
-    app_settings.set_value("YANDEX_WEATHER_LAST_ERROR_AT", "", conn=conn)
-    yandex_weather._save_cache(SAMPLE, conn=conn)
-    result = yandex_weather.get_weather(conn=conn)
-    assert result is not None and result["available"]
-    assert result["stale"] is False
+    # 2. Парсинг GraphQL-ответа
+    fetched_at = datetime.now(UTC)
+    result = yandex_weather._parse_response(_sample(), fetched_at)
+    assert result["available"] is True
+    assert result["fact"]["temp"] == 6
     assert result["fact"]["condition"] == "пасмурно"
-    assert result["fact"]["wind_dir"] == "СЗ"
-    assert result["forecast"]["date"] == "2026-10-27"
-    assert result["forecast"]["parts"][0]["part_label"] == "днём"
-    assert result["forecast"]["parts"][0]["condition"] == "небольшой дождь"
-    assert result["forecast"]["parts"][1]["part_label"] == "вечером"
+    assert result["fact"]["wind_dir"] == "СВ"
+    assert result["fact"]["feels_like"] == 4
+    parts = result["forecast"]["parts"]
+    assert parts, "должны быть части суток"
+    labels = [p["part_label"] for p in parts]
+    assert all(l.startswith("сегодня") or l.startswith("завтра") for l in labels), labels
+    for p in parts:
+        assert p["temp_min"] <= p["temp_max"]
+        assert p["condition"] in ("пасмурно", "небольшой дождь")
     assert result["updated_local"] is not None
 
-    # 4. Кэш устарел, API недоступен -> отдаём кэш с флагом stale
-    app_settings.set_value(
-        "YANDEX_WEATHER_UPDATED_AT",
-        (datetime.now(UTC) - timedelta(minutes=200)).isoformat(),
-        conn=conn,
-    )
-    result = yandex_weather.get_weather(conn=conn)
-    assert result is not None and result["stale"] is True
+    # 3. Кэш свежий -> без запроса к API
+    yandex_weather._save_cache(result, conn=conn)
+    got = yandex_weather.get_weather(conn=conn)
+    assert got is not None and got["available"] and got["stale"] is False
 
-    # 5. Кэш устарел, API работает -> обновление (после истечения паузы ошибок)
-    app_settings.set_value(
-        "YANDEX_WEATHER_LAST_ERROR_AT",
-        (datetime.now(UTC) - timedelta(minutes=60)).isoformat(),
-        conn=conn,
-    )
-    yandex_weather._fetch = lambda *a, **k: SAMPLE
-    result = yandex_weather.get_weather(conn=conn)
-    assert result is not None and result["stale"] is False
+    # 4. Ошибка + нет кэша -> available=False с причиной (сначала чистим кэш)
+    app_settings.set_value("YANDEX_WEATHER_CACHE", "", conn=conn)
+    original_fetch = yandex_weather._fetch
+    yandex_weather._fetch = lambda *a, **k: (_ for _ in ()).throw(OSError("network down"))
+    got = yandex_weather.get_weather(conn=conn)
+    assert got is not None and got["available"] is False
+    assert "network down" in got["detail"]
 
-    # 6. HTTP-ошибка API описывается читаемо
+    # 4a. Пауза: повтор не выполняется
+    calls = {"n": 0}
+    def counting_fetch(*a, **k):
+        calls["n"] += 1
+        raise OSError("nope")
+    yandex_weather._fetch = counting_fetch
+    got = yandex_weather.get_weather(conn=conn)
+    assert calls["n"] == 0 and "повтор через" in got["detail"]
+
+    # 4b. После паузы запрос выполняется, успех сбрасывает маркеры
+    app_settings.set_value("YANDEX_WEATHER_LAST_ERROR_AT",
+                           (datetime.now(UTC) - timedelta(minutes=60)).isoformat(), conn=conn)
+    yandex_weather._fetch = lambda *a, **k: _sample()
+    got = yandex_weather.get_weather(conn=conn)
+    assert got["available"] is True and got["stale"] is False
+
+    # 5. GraphQL-ошибка (HTTP 200, errors в теле) описывается читаемо
     import urllib.error
-    err = urllib.error.HTTPError(url="", code=403, msg="Forbidden",
-                                 hdrs=None, fp=None)
+    err = urllib.error.HTTPError(url="", code=403, msg="Forbidden", hdrs=None, fp=None)
     assert "403" in yandex_weather._describe_fetch_error(err)
 
-    # 7. Русские переводы покрывают все коды условия
-    for code in ["clear", "partly-cloudy", "cloudy", "overcast", "light-rain", "rain",
-                 "heavy-rain", "showers", "wet-snow", "light-snow", "snow", "snow-showers",
-                 "hail", "thunderstorm", "thunderstorm-with-rain", "thunderstorm-with-hail"]:
+    # 6. Устаревший кэш + ошибка API -> кэш с флагом stale
+    app_settings.set_value("YANDEX_WEATHER_UPDATED_AT",
+                           (datetime.now(UTC) - timedelta(minutes=200)).isoformat(), conn=conn)
+    yandex_weather._fetch = lambda *a, **k: (_ for _ in ()).throw(OSError("down"))
+    got = yandex_weather.get_weather(conn=conn)
+    assert got["available"] is True and got["stale"] is True
+
+    # 7. Переводы покрывают все условия
+    for code in ["CLEAR", "PARTLY_CLOUDY", "CLOUDY", "OVERCAST", "LIGHT_RAIN", "RAIN",
+                 "HEAVY_RAIN", "SHOWERS", "WET_SNOW", "LIGHT_SNOW", "SNOW", "SNOW_SHOWERS",
+                 "HAIL", "THUNDERSTORM", "THUNDERSTORM_WITH_RAIN", "THUNDERSTORM_WITH_HAIL",
+                 "FOG", "MIST"]:
         assert code in yandex_weather.CONDITION_RU
 
     yandex_weather._fetch = original_fetch
