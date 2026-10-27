@@ -26,8 +26,37 @@ from . import settings as app_settings
 
 API_URL = "https://api.weather.yandex.ru/graphql/query"
 
-# Запрос в рамках бесплатного тарифа: температура, ощущается как, ветер, условие
+# Запрос в рамках бесплатного тарифа: температура, ощущается как, ветер, условие, иконка
 FORECAST_QUERY = """
+{
+  weatherByPoint(request: { lat: %s, lon: %s }) {
+    now {
+      temperature
+      feelsLike
+      windSpeed
+      windDirection
+      condition
+      icon(format: SVG, theme: DARK)
+    }
+    forecast {
+      days(limit: 2) {
+        hours {
+          time
+          temperature
+          feelsLike
+          windSpeed
+          windDirection
+          condition
+          icon(format: SVG, theme: DARK)
+        }
+      }
+    }
+  }
+}
+"""
+
+# Запрос без иконки — используется, если тариф не даёт поле icon
+FORECAST_QUERY_NO_ICON = """
 {
   weatherByPoint(request: { lat: %s, lon: %s }) {
     now {
@@ -148,6 +177,7 @@ def _parse_response(raw: dict[str, Any], fetched_at: datetime | None = None) -> 
         "temp": now.get("temperature"),
         "feels_like": now.get("feelsLike"),
         "condition": _condition(now.get("condition")),
+        "icon_url": now.get("icon"),
         "icon": _condition_icon(now.get("condition")),
         "wind_speed": now.get("windSpeed"),
         "wind_dir": _wind_dir(now.get("windDirection")),
@@ -181,12 +211,14 @@ def _parse_response(raw: dict[str, Any], fetched_at: datetime | None = None) -> 
         bucket = buckets.setdefault(
             key,
             {"part_key": key[0], "part_name": name, "part_label": key[1],
-             "temps": [], "conditions": [], "wind": 0.0},
+             "temps": [], "conditions": [], "icons": [], "wind": 0.0},
         )
         if hour.get("temperature") is not None:
             bucket["temps"].append(float(hour["temperature"]))
         if hour.get("condition"):
             bucket["conditions"].append(hour["condition"])
+        if hour.get("icon"):
+            bucket["icons"].append(hour["icon"])
         try:
             bucket["wind"] = max(bucket["wind"], float(hour.get("windSpeed") or 0))
         except (TypeError, ValueError):
@@ -202,12 +234,17 @@ def _parse_response(raw: dict[str, Any], fetched_at: datetime | None = None) -> 
             Counter(bucket["conditions"]).most_common(1)[0][0]
             if bucket["conditions"] else None
         )
+        dominant_icon = (
+            Counter(bucket["icons"]).most_common(1)[0][0]
+            if bucket["icons"] else None
+        )
         parts.append({
             "part_name": bucket["part_name"],
             "part_label": bucket["part_label"],
             "temp_min": int(min(bucket["temps"])) if bucket["temps"] else None,
             "temp_max": int(max(bucket["temps"])) if bucket["temps"] else None,
             "condition": _condition(dominant_condition),
+            "icon_url": dominant_icon,
             "icon": _condition_icon(dominant_condition),
             "wind_speed": round(bucket["wind"], 1) if bucket["wind"] else None,
         })
@@ -228,8 +265,7 @@ def _parse_response(raw: dict[str, Any], fetched_at: datetime | None = None) -> 
     }
 
 
-def _fetch(api_key: str, lat: str, lon: str) -> dict[str, Any]:
-    query = FORECAST_QUERY % (lat, lon)
+def _post_query(api_key: str, query: str) -> dict[str, Any]:
     request = urllib.request.Request(
         API_URL,
         data=json.dumps({"query": query}).encode("utf-8"),
@@ -246,6 +282,17 @@ def _fetch(api_key: str, lat: str, lon: str) -> dict[str, Any]:
         messages = "; ".join(e.get("message", "?") for e in payload["errors"])
         raise ValueError(f"GraphQL: {messages}")
     return payload
+
+
+def _fetch(api_key: str, lat: str, lon: str) -> dict[str, Any]:
+    try:
+        return _post_query(api_key, FORECAST_QUERY % (lat, lon))
+    except ValueError as err:
+        if "icon" in str(err).lower():
+            # Поле icon недоступно тарифу — повторяем без иконок
+            logger.warning("Yandex.Weather: поле icon недоступно, запрос без иконок: {}", err)
+            return _post_query(api_key, FORECAST_QUERY_NO_ICON % (lat, lon))
+        raise
 
 
 def _describe_fetch_error(err: Exception) -> str:
@@ -265,26 +312,37 @@ def _describe_fetch_error(err: Exception) -> str:
     return str(err)
 
 
+CACHE_VERSION = 2
+
+
 def _load_cache(conn: sqlite3.Connection | None) -> tuple[dict[str, Any] | None, datetime | None]:
+    """Сырой ответ API из кэша и время его получения.
+
+    Кэш хранит именно сырой ответ (не разобранный): при обновлении логики
+    разбора старые данные переоформляются новым кодом автоматически.
+    """
     raw = (app_settings.get_string("YANDEX_WEATHER_CACHE", conn=conn) or "").strip()
     updated_raw = (app_settings.get_string("YANDEX_WEATHER_UPDATED_AT", conn=conn) or "").strip()
-    if not raw:
-        return None, None
-    try:
-        data = json.loads(raw)
-    except json.JSONDecodeError:
-        return None, None
     updated = None
     if updated_raw:
         try:
             updated = datetime.fromisoformat(updated_raw)
         except ValueError:
             updated = None
-    return data, updated
+    if not raw:
+        return None, updated
+    try:
+        wrapper = json.loads(raw)
+    except json.JSONDecodeError:
+        return None, updated
+    if not isinstance(wrapper, dict) or wrapper.get("version") != CACHE_VERSION:
+        return None, updated  # кэш старого формата — игнорируем
+    return wrapper.get("raw"), updated
 
 
-def _save_cache(parsed: dict[str, Any], conn: sqlite3.Connection | None) -> None:
-    app_settings.set_value("YANDEX_WEATHER_CACHE", json.dumps(parsed, ensure_ascii=False), conn=conn)
+def _save_cache(raw: dict[str, Any], conn: sqlite3.Connection | None) -> None:
+    wrapper = {"version": CACHE_VERSION, "raw": raw}
+    app_settings.set_value("YANDEX_WEATHER_CACHE", json.dumps(wrapper, ensure_ascii=False), conn=conn)
     app_settings.set_value("YANDEX_WEATHER_UPDATED_AT", datetime.now(UTC).isoformat(), conn=conn)
     # Успех — сбрасываем маркеры ошибок
     app_settings.set_value("YANDEX_WEATHER_LAST_ERROR", "", conn=conn)
@@ -326,11 +384,11 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
     if not api_key or not lat or not lon:
         return None
 
-    cached, updated = _load_cache(conn)
-    if cached is not None and updated is not None:
+    cached_raw, updated = _load_cache(conn)
+    if cached_raw is not None and updated is not None:
         age_minutes = (datetime.now(UTC) - updated).total_seconds() / 60.0
         if age_minutes < refresh_minutes:
-            result = dict(cached)
+            result = _parse_response(cached_raw, updated)
             result["stale"] = False
             return result
 
@@ -342,8 +400,8 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
         if since_error < error_retry_minutes:
             retry_in = int(error_retry_minutes - since_error)
             detail = f"{last_error} (повтор через {retry_in} мин)"
-            if cached is not None:
-                result = dict(cached)
+            if cached_raw is not None:
+                result = _parse_response(cached_raw, updated)
                 result["stale"] = True
                 return result
             return {"available": False, "detail": detail}
@@ -355,7 +413,7 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
         result = _parse_response(raw, fetched_at)
         if not result["forecast"]["parts"] and result["fact"]["temp"] is None:
             raise ValueError("пустой ответ API")
-        _save_cache(result, conn=conn)
+        _save_cache(raw, conn=conn)
         result["stale"] = False
         return result
     except Exception as err:
@@ -364,8 +422,8 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
         _save_error_state(fetch_error, conn=conn)
 
     # Не удалось обновить — отдаём устаревший кэш, если есть
-    if cached is not None:
-        result = dict(cached)
+    if cached_raw is not None:
+        result = _parse_response(cached_raw, updated)
         result["stale"] = True
         return result
     return {"available": False, "detail": fetch_error}

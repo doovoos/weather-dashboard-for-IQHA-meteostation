@@ -19,7 +19,8 @@ def _hours(base: datetime, temps: list[int], condition: str = "OVERCAST") -> lis
     return [
         {"time": (base + timedelta(hours=i)).isoformat(),
          "temperature": t, "feelsLike": t - 1, "windSpeed": 2.0 + i * 0.1,
-         "windDirection": "NORTH_EAST", "condition": condition}
+         "windDirection": "NORTH_EAST", "condition": condition,
+         "icon": "https://yastatic.net/weather/i/icons/funky/dark/ovc.svg"}
         for i, t in enumerate(temps)
     ]
 
@@ -33,7 +34,8 @@ def _sample() -> dict:
         "data": {
             "weatherByPoint": {
                 "now": {"temperature": 6, "feelsLike": 4, "windSpeed": 3.2,
-                        "windDirection": "NORTH_EAST", "condition": "OVERCAST"},
+                        "windDirection": "NORTH_EAST", "condition": "OVERCAST",
+                        "icon": "https://yastatic.net/weather/i/icons/funky/dark/ovc.svg"},
                 "forecast": {"days": [
                     {"hours": day_hours},
                     {"hours": tomorrow_hours},
@@ -69,6 +71,7 @@ def main() -> None:
     assert result["fact"]["temp"] == 6
     assert result["fact"]["condition"] == "пасмурно"
     assert result["fact"]["icon"] == "☁️"
+    assert result["fact"]["icon_url"] == "https://yastatic.net/weather/i/icons/funky/dark/ovc.svg"
     assert result["fact"]["wind_dir"] == "СВ"
     assert result["fact"]["feels_like"] == 4
     parts = result["forecast"]["parts"]
@@ -79,6 +82,7 @@ def main() -> None:
         assert p["temp_min"] <= p["temp_max"]
         assert p["condition"] in ("пасмурно", "небольшой дождь")
         assert p["icon"] in ("☁️", "🌦️")
+        assert p["icon_url"], "иконка API должна пробрасываться в части суток"
     # Хронологический порядок частей суток: ночь -> утро -> день -> вечер
     order = {l.split()[-1]: i for i, l in enumerate(["ночью", "утром", "днём", "вечером"])}
     for a, b in zip(labels, labels[1:]):
@@ -86,10 +90,11 @@ def main() -> None:
             assert order[a.split()[-1]] < order[b.split()[-1]], f"не хронологично: {a} -> {b}"
     assert result["updated_local"] is not None
 
-    # 3. Кэш свежий -> без запроса к API
-    yandex_weather._save_cache(result, conn=conn)
+    # 3. Кэш свежий -> без запроса к API (в кэше — сырой ответ)
+    yandex_weather._save_cache(_sample(), conn=conn)
     got = yandex_weather.get_weather(conn=conn)
     assert got is not None and got["available"] and got["stale"] is False
+    assert got["fact"]["icon_url"], "иконка должна доставаться из кэша"
 
     # 4. Ошибка + нет кэша -> available=False с причиной (сначала чистим кэш)
     app_settings.set_value("YANDEX_WEATHER_CACHE", "", conn=conn)
