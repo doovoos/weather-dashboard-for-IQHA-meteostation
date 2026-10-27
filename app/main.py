@@ -16,7 +16,7 @@ from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
 from loguru import logger
 
-from . import csv_import, forwarding, settings, stations as stations_repo
+from . import csv_import, forwarding, settings, stations as stations_repo, zambretti
 from .auth import admin_enabled, require_admin
 from .config import (
     INGEST_MAX_BODY_BYTES,
@@ -184,6 +184,7 @@ def dashboard(
     comfort = get_comfort_risk(snapshot, conn=conn)
     comparison = get_period_comparison(conn=conn)
     chart_series = get_chart_series(days=1, conn=conn)
+    forecast = zambretti.compute_forecast(conn=conn)
     return render_template(
         request,
         "index.html",
@@ -195,6 +196,7 @@ def dashboard(
             "comfort": comfort,
             "comparison": comparison,
             "chart_series": chart_series,
+            "forecast": forecast,
             "stations": enabled_stations,
             "active_station": active_station,
         },
@@ -310,6 +312,82 @@ async def ingest(request: Request, conn: sqlite3.Connection = Depends(db_depende
 @app.get("/api/status", response_model=StatusOk)
 def api_status() -> dict[str, Any]:
     return {"status": "ok"}
+
+
+@app.get("/api/forecast")
+def api_forecast(conn: sqlite3.Connection = Depends(db_dependency)) -> dict[str, Any]:
+    forecast = zambretti.compute_forecast(conn=conn)
+    if forecast is None:
+        return {"available": False, "text": zambretti.FORECAST_UNAVAILABLE_TEXT}
+    return forecast
+
+
+# ---------- Elevation lookup (Open-Meteo / Google Maps Elevation API) ----------
+
+def _elevation_from_open_meteo(lat: float, lon: float) -> float:
+    import urllib.request
+    url = f"https://api.open-meteo.com/v1/elevation?latitude={lat}&longitude={lon}"
+    with urllib.request.urlopen(url, timeout=10) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    value = data.get("elevation")
+    if not isinstance(value, list) or not value:
+        raise ValueError("Open-Meteo: пустой ответ")
+    return float(value[0])
+
+
+def _elevation_from_google(lat: float, lon: float, api_key: str) -> float:
+    import urllib.parse
+    import urllib.request
+    url = (
+        "https://maps.googleapis.com/maps/api/elevation/json"
+        f"?locations={urllib.parse.quote(f'{lat},{lon}')}&key={api_key}"
+    )
+    with urllib.request.urlopen(url, timeout=10) as response:
+        data = json.loads(response.read().decode("utf-8"))
+    if data.get("status") != "OK" or not data.get("results"):
+        raise ValueError(f"Google Maps: статус {data.get('status')}")
+    return float(data["results"][0]["elevation"])
+
+
+@app.post("/admin/elevation-lookup")
+async def admin_elevation_lookup(
+    request: Request,
+    _: str = Depends(require_admin),
+    conn: sqlite3.Connection = Depends(db_dependency),
+) -> JSONResponse:
+    """Определение высоты над уровнем моря по координатам.
+
+    Порядок: Google Maps Elevation API (если задан ключ), затем Open-Meteo.
+    """
+    try:
+        body = await request.json()
+        lat = float(str(body.get("latitude", "")).replace(",", "."))
+        lon = float(str(body.get("longitude", "")).replace(",", "."))
+        if not (-90 <= lat <= 90 and -180 <= lon <= 180):
+            raise ValueError
+    except (ValueError, TypeError, json.JSONDecodeError):
+        return JSONResponse({"ok": False, "detail": "Укажите корректные координаты."}, status_code=400)
+
+    sources: list[tuple[str, Any]] = []
+    google_key = settings.get_string("GOOGLE_MAPS_API_KEY", conn=conn).strip()
+    if google_key:
+        sources.append(("google", lambda: _elevation_from_google(lat, lon, google_key)))
+    sources.append(("open-meteo", lambda: _elevation_from_open_meteo(lat, lon)))
+
+    errors: list[str] = []
+    for name, fn in sources:
+        try:
+            elevation = round(fn(), 1)
+            logger.info("Elevation lookup: {}, {} -> {} м ({})", lat, lon, elevation, name)
+            return JSONResponse({"ok": True, "elevation": elevation, "source": name})
+        except Exception as err:
+            logger.warning("Elevation lookup via {} failed: {}", name, err)
+            errors.append(f"{name}: {err}")
+
+    return JSONResponse(
+        {"ok": False, "detail": "Не удалось определить высоту: " + "; ".join(errors)},
+        status_code=502,
+    )
 
 
 # ---------- Admin (HTTP Basic Auth) ----------

@@ -54,6 +54,29 @@
     </div>
   </header>
 
+  {# ---------- Прогноз погоды (Замбретти) ---------- #}
+  <div class="card" style="margin-bottom: var(--gap);">
+    <div class="card-head">
+      <div class="card-title">Прогноз погоды</div>
+      <span class="card-code">метод Замбретти</span>
+    </div>
+    {% if forecast and forecast.available %}
+    <div class="forecast-body">
+      <div class="forecast-text">{{ forecast.text }}</div>
+      <div class="trend muted">
+        Давление {{ "%.0f"|format(forecast.pressure_sea_level_hpa) }} гПа ·
+        за 3 ч {{ "%+.1f"|format(forecast.delta3h_hpa) }} гПа ({{ forecast.trend_label }}){% if forecast.wind_dir_deg is not none %} ·
+        ветер {{ "%.0f"|format(forecast.wind_dir_deg) }}°{% endif %}
+      </div>
+    </div>
+    {% else %}
+    <div class="forecast-body">
+      <div class="forecast-text muted">Прогноз пока недоступен — не хватает данных: недостаточно данных для устойчивого прогноза.</div>
+      <div class="trend muted">Для расчёта нужна история давления за 2–3 часа.</div>
+    </div>
+    {% endif %}
+  </div>
+
   {% if not snapshot %}
   <div class="card empty-card">
     <h2>Телеметрия еще не поступала</h2>

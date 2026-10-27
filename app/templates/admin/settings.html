@@ -29,6 +29,12 @@
                        type="{{ 'number' if spec.type == 'int' else 'text' }}"
                        name="{{ spec.key }}"
                        value="{{ values[spec.key] }}">
+                {% if spec.key == 'STATION_GROUND_ELEVATION_M' %}
+                <button type="button" class="btn" id="elevation-lookup-btn" style="margin-top:6px;">
+                  Определить по координатам
+                </button>
+                <div id="elevation-lookup-status" class="form-help"></div>
+                {% endif %}
               {% endif %}
               {% if spec.help %}<div class="form-help">{{ spec.help }}</div>{% endif %}
             </div>
@@ -43,4 +49,43 @@
     <a href="/admin/settings" class="btn">Отмена</a>
   </div>
 </form>
+
+<script>
+(function () {
+  const btn = document.getElementById("elevation-lookup-btn");
+  if (!btn) return;
+  const statusEl = document.getElementById("elevation-lookup-status");
+  const elevInput = document.getElementById("f-STATION_GROUND_ELEVATION_M");
+
+  btn.addEventListener("click", async function () {
+    const lat = (document.getElementById("f-STATION_LATITUDE")?.value || "").trim().replace(",", ".");
+    const lon = (document.getElementById("f-STATION_LONGITUDE")?.value || "").trim().replace(",", ".");
+    if (!lat || !lon) {
+      statusEl.textContent = "Сначала заполните широту и долготу станции выше.";
+      return;
+    }
+    btn.disabled = true;
+    statusEl.textContent = "Определяем высоту…";
+    try {
+      const resp = await fetch("/admin/elevation-lookup", {
+        method: "POST",
+        headers: { "Content-Type": "application/json" },
+        body: JSON.stringify({ latitude: lat, longitude: lon }),
+      });
+      const data = await resp.json();
+      if (resp.ok && data.ok) {
+        elevInput.value = Math.round(data.elevation);
+        const src = data.source === "google" ? "Google Maps Elevation API" : "Open-Meteo Elevation API";
+        statusEl.textContent = "Высота определена (" + src + "): " + data.elevation + " м. Не забудьте сохранить форму.";
+      } else {
+        statusEl.textContent = data.detail || "Не удалось определить высоту.";
+      }
+    } catch (err) {
+      statusEl.textContent = "Ошибка запроса: " + err.message;
+    } finally {
+      btn.disabled = false;
+    }
+  });
+})();
+</script>
 {% endblock %}

@@ -40,6 +40,7 @@ def refresh_local_tz() -> None:
 TEMPERATURE_SENSOR_IDS = ("T1", "T2", "T3", "T4", "T5", "T6")
 HUMIDITY_SENSOR_IDS = ("RH", "H1", "H2")
 PRESSURE_SENSOR_IDS = ("PRESS", "HPA")
+WIND_DIR_SENSOR_IDS = ("1DIR", "WIND_DIR", "WINDDIR", "WDIR")
 
 
 def dict_factory(cursor: sqlite3.Cursor, row: tuple[Any, ...]) -> dict[str, Any]:
@@ -411,6 +412,76 @@ def get_chart_series(
         bucket["points"].append({"x": row["observed_at"], "y": row["value"]})
 
     return {"hours": hours_eff, "days": round(hours_eff / 24, 2), "series": series}
+
+
+def _pressure_to_hpa(value: float, unit: str | None) -> float:
+    """Приводит показание давления к гПа с учётом единицы измерения."""
+    u = (unit or "").lower()
+    if "мм" in u or "mm" in u:  # мм рт.ст.
+        from .zambretti import mmhg_to_hpa
+        return mmhg_to_hpa(float(value))
+    return float(value)  # гПа / hPa / мбар
+
+
+def get_zambretti_inputs(
+    history_hours: float = 4.0,
+    conn: sqlite3.Connection | None = None,
+) -> dict[str, Any]:
+    """Входные данные для прогноза Замбретти.
+
+    - pressure_readings: [(datetime, value_hPa), ...] за окно history_hours
+      по первому датчику давления с данными (PRESS -> HPA);
+    - temp_c: текущая температура (T1..T6);
+    - wind_dir_deg: текущее направление ветра.
+    """
+    with use_connection(conn) as connection:
+        placeholders = ",".join("?" for _ in PRESSURE_SENSOR_IDS)
+        hours_modifier = f"-{int(round(history_hours))} hours"
+        rows = connection.execute(
+            f"""
+            SELECT upper(sensor_id) AS sid, observed_at, value, unit
+            FROM observations
+            WHERE upper(sensor_id) IN ({placeholders})
+              AND julianday(observed_at) >= julianday('now', ?)
+            ORDER BY observed_at ASC
+            """,
+            (*PRESSURE_SENSOR_IDS, hours_modifier),
+        ).fetchall()
+
+    # Берём первый сенсор группы, у которого есть данные (PRESS -> HPA)
+    readings: list[tuple[Any, float]] = []
+    for sid in PRESSURE_SENSOR_IDS:
+        sensor_rows = [r for r in rows if r["sid"] == sid]
+        if sensor_rows:
+            readings = [
+                (parse_timestamp(r["observed_at"]), _pressure_to_hpa(r["value"], r["unit"]))
+                for r in sensor_rows
+            ]
+            break
+
+    with use_connection(conn) as connection:
+        temp_row = connection.execute(
+            f"""
+            SELECT value FROM observations
+            WHERE upper(sensor_id) IN ({",".join("?" for _ in TEMPERATURE_SENSOR_IDS)})
+            ORDER BY observed_at DESC LIMIT 1
+            """,
+            TEMPERATURE_SENSOR_IDS,
+        ).fetchone()
+        wind_row = connection.execute(
+            f"""
+            SELECT value FROM observations
+            WHERE upper(sensor_id) IN ({",".join("?" for _ in WIND_DIR_SENSOR_IDS)})
+            ORDER BY observed_at DESC LIMIT 1
+            """,
+            WIND_DIR_SENSOR_IDS,
+        ).fetchone()
+
+    return {
+        "pressure_readings": readings,
+        "temp_c": float(temp_row["value"]) if temp_row else None,
+        "wind_dir_deg": float(wind_row["value"]) if wind_row else None,
+    }
 
 
 def _value_by_ids(reading_lookup: dict[str, dict[str, Any]], ids: tuple[str, ...]) -> str:

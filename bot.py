@@ -8,7 +8,7 @@ from loguru import logger
 from telegram import KeyboardButton, ReplyKeyboardMarkup, Update, WebAppInfo
 from telegram.ext import Application, CommandHandler, ContextTypes, MessageHandler, filters
 
-from app import settings
+from app import settings, zambretti
 from app.config import (
     TELEGRAM_BOT_TOKEN,
     WEATHER_TIMEZONE,
@@ -45,7 +45,13 @@ def keyboard() -> ReplyKeyboardMarkup:
 
 
 def current_weather_text() -> str:
-    return format_telegram_snapshot(get_latest_snapshot())
+    text = format_telegram_snapshot(get_latest_snapshot())
+    try:
+        forecast = zambretti.compute_forecast()
+    except Exception:
+        logger.exception("Zambretti forecast failed for telegram")
+        forecast = None
+    return text + "\n\n" + zambretti.format_telegram_forecast(forecast)
 
 
 def build_dynamic_bot_name(snapshot: dict | None) -> str:
