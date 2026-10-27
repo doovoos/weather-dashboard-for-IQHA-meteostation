@@ -119,7 +119,11 @@ def _parse_response(raw: dict[str, Any]) -> dict[str, Any]:
 
 def _fetch(api_key: str, lat: str, lon: str) -> dict[str, Any]:
     url = f"{API_URL}?lat={lat}&lon={lon}&lang=ru_RU"
-    request = urllib.request.Request(url, headers={"X-Yandex-Weather-Key": api_key})
+    # Оба заголовка: свежие ключи — X-Yandex-Weather-Key, старые — X-Yandex-API-Key
+    request = urllib.request.Request(url, headers={
+        "X-Yandex-Weather-Key": api_key,
+        "X-Yandex-API-Key": api_key,
+    })
     with urllib.request.urlopen(request, timeout=10) as response:
         return json.loads(response.read().decode("utf-8"))
 
@@ -162,6 +166,26 @@ def _load_cache(conn: sqlite3.Connection | None) -> tuple[dict[str, Any] | None,
 def _save_cache(raw: dict[str, Any], conn: sqlite3.Connection | None) -> None:
     app_settings.set_value("YANDEX_WEATHER_CACHE", json.dumps(raw, ensure_ascii=False), conn=conn)
     app_settings.set_value("YANDEX_WEATHER_UPDATED_AT", datetime.now(UTC).isoformat(), conn=conn)
+    # Успех — сбрасываем маркеры ошибок
+    app_settings.set_value("YANDEX_WEATHER_LAST_ERROR", "", conn=conn)
+    app_settings.set_value("YANDEX_WEATHER_LAST_ERROR_AT", "", conn=conn)
+
+
+def _load_error_state(conn: sqlite3.Connection | None) -> tuple[str | None, datetime | None]:
+    """Последняя ошибка запроса и её время (для паузы между повторами)."""
+    message = (app_settings.get_string("YANDEX_WEATHER_LAST_ERROR", conn=conn) or "").strip()
+    at_raw = (app_settings.get_string("YANDEX_WEATHER_LAST_ERROR_AT", conn=conn) or "").strip()
+    if not message or not at_raw:
+        return None, None
+    try:
+        return message, datetime.fromisoformat(at_raw)
+    except ValueError:
+        return message, None
+
+
+def _save_error_state(message: str, conn: sqlite3.Connection | None) -> None:
+    app_settings.set_value("YANDEX_WEATHER_LAST_ERROR", message, conn=conn)
+    app_settings.set_value("YANDEX_WEATHER_LAST_ERROR_AT", datetime.now(UTC).isoformat(), conn=conn)
 
 
 def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None:
@@ -191,6 +215,20 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
             result["stale"] = False
             return result
 
+    # Пауза между повторами после ошибки, чтобы не сжигать лимиты API
+    error_retry_minutes = max(5, app_settings.get_int("YANDEX_WEATHER_ERROR_RETRY_MINUTES", conn=conn) or 30)
+    last_error, last_error_at = _load_error_state(conn)
+    if last_error and last_error_at is not None:
+        since_error = (datetime.now(UTC) - last_error_at).total_seconds() / 60.0
+        if since_error < error_retry_minutes:
+            retry_in = int(error_retry_minutes - since_error)
+            detail = f"{last_error} (повтор через {retry_in} мин)"
+            if cached_raw is not None:
+                result = _parse_response(cached_raw)
+                result["stale"] = True
+                return result
+            return {"available": False, "detail": detail}
+
     fetch_error: str | None = None
     try:
         raw = _fetch(api_key, lat, lon)
@@ -201,6 +239,7 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
     except Exception as err:
         fetch_error = _describe_fetch_error(err)
         logger.warning("Yandex.Weather fetch failed: {}", fetch_error)
+        _save_error_state(fetch_error, conn=conn)
 
     # Не удалось обновить — отдаём устаревший кэш, если есть
     if cached_raw is not None:

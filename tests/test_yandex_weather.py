@@ -63,7 +63,30 @@ def main() -> None:
     assert result["available"] is False
     assert "network down" in result["detail"]
 
-    # 3. Кэш свежий -> отдаётся без запроса к API
+    # 2a. Повтор приостановлен: сразу после ошибки новый запрос не делается
+    call_count = {"n": 0}
+    def counting_fetch(*a, **k):
+        call_count["n"] += 1
+        raise OSError("should not be called")
+    yandex_weather._fetch = counting_fetch
+    result = yandex_weather.get_weather(conn=conn)
+    assert call_count["n"] == 0, "повтор не должен выполняться в паузе"
+    assert result["available"] is False
+    assert "network down" in result["detail"] and "повтор через" in result["detail"]
+
+    # 2b. После истечения паузы запрос выполняется снова
+    app_settings.set_value(
+        "YANDEX_WEATHER_LAST_ERROR_AT",
+        (datetime.now(UTC) - timedelta(minutes=60)).isoformat(),
+        conn=conn,
+    )
+    yandex_weather._fetch = lambda *a, **k: (_ for _ in ()).throw(OSError("still down"))
+    result = yandex_weather.get_weather(conn=conn)
+    assert result["available"] is False and "still down" in result["detail"]
+
+    # 3. Кэш свежий -> отдаётся без запроса к API (маркеры ошибки сброшены ранее нет — чистим)
+    app_settings.set_value("YANDEX_WEATHER_LAST_ERROR", "", conn=conn)
+    app_settings.set_value("YANDEX_WEATHER_LAST_ERROR_AT", "", conn=conn)
     yandex_weather._save_cache(SAMPLE, conn=conn)
     result = yandex_weather.get_weather(conn=conn)
     assert result is not None and result["available"]
@@ -85,7 +108,12 @@ def main() -> None:
     result = yandex_weather.get_weather(conn=conn)
     assert result is not None and result["stale"] is True
 
-    # 5. Кэш устарел, API работает -> обновление
+    # 5. Кэш устарел, API работает -> обновление (после истечения паузы ошибок)
+    app_settings.set_value(
+        "YANDEX_WEATHER_LAST_ERROR_AT",
+        (datetime.now(UTC) - timedelta(minutes=60)).isoformat(),
+        conn=conn,
+    )
     yandex_weather._fetch = lambda *a, **k: SAMPLE
     result = yandex_weather.get_weather(conn=conn)
     assert result is not None and result["stale"] is False
