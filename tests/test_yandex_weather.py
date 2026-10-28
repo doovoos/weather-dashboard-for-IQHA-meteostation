@@ -56,6 +56,7 @@ def _create_test_db() -> sqlite3.Connection:
 
 def main() -> None:
     conn = _create_test_db()
+    now = datetime.now(UTC).replace(minute=0, second=0, microsecond=0)
 
     # 1. Не настроено -> None
     assert yandex_weather.get_weather(conn=conn) is None
@@ -70,7 +71,6 @@ def main() -> None:
     assert result["available"] is True
     assert result["fact"]["temp"] == 6
     assert result["fact"]["condition"] == "пасмурно"
-    assert result["fact"]["icon"] == "☁️"
     assert result["fact"]["icon_url"] == "https://yastatic.net/weather/i/icons/funky/dark/ovc.svg"
     assert result["fact"]["wind_dir"] == "СВ"
     assert result["fact"]["feels_like"] == 4
@@ -81,7 +81,6 @@ def main() -> None:
     for p in parts:
         assert p["temp_min"] <= p["temp_max"]
         assert p["condition"] in ("пасмурно", "небольшой дождь")
-        assert p["icon"] in ("☁️", "🌦️")
         assert p["icon_url"], "иконка API должна пробрасываться в части суток"
     # Хронологический порядок частей суток: ночь -> утро -> день -> вечер
     order = {l.split()[-1]: i for i, l in enumerate(["ночью", "утром", "днём", "вечером"])}
@@ -89,6 +88,27 @@ def main() -> None:
         if a.split()[0] == b.split()[0]:  # один и тот же день
             assert order[a.split()[-1]] < order[b.split()[-1]], f"не хронологично: {a} -> {b}"
     assert result["updated_local"] is not None
+
+    # 2a. Максимум 6 частей: ближайшая отбрасывается, послезавтра входит (48ч)
+    many = {
+        "data": {"weatherByPoint": {
+            "now": {"temperature": 6, "feelsLike": 4, "windSpeed": 3.2,
+                    "windDirection": "NORTH_EAST", "condition": "OVERCAST"},
+            "forecast": {"days": [
+                {"hours": _hours(now - timedelta(hours=2), [5, 4, 5, 6, 7, 8, 9, 8, 7, 6, 5, 4, 3, 2, 3, 4, 5, 6, 7, 6, 5, 4, 3, 2])},
+                {"hours": _hours(now + timedelta(hours=22), [3, 2, 1, 0, 1, 2, 3, 4, 5, 6, 7, 8, 7, 6, 5, 4, 3, 2, 1, 0, 1, 2, 3, 4])},
+                {"hours": _hours(now + timedelta(hours=46), [3, 3, 3, 3, 3, 3])},
+            ]},
+        }}
+    }
+    result_many = yandex_weather._parse_response(many, fetched_at)
+    parts_many = result_many["forecast"]["parts"]
+    assert len(parts_many) == 6, f"ожидалось 6 частей, получено {len(parts_many)}"
+    labels_many = [p["part_label"] for p in parts_many]
+    # Самая ранняя часть отброшена, самая поздняя (п/завтра) — присутствует
+    assert "п/завтра" in " ".join(labels_many), labels_many
+    # Дубликатов ближайших частей не осталось
+    assert len(set(labels_many)) == len(labels_many)
 
     # 3. Кэш свежий -> без запроса к API (в кэше — сырой ответ)
     yandex_weather._save_cache(_sample(), conn=conn)

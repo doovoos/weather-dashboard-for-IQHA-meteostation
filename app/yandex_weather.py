@@ -39,7 +39,7 @@ FORECAST_QUERY = """
       icon(format: SVG, theme: DARK)
     }
     forecast {
-      days(limit: 2) {
+      days(limit: 3) {
         hours {
           time
           temperature
@@ -47,7 +47,7 @@ FORECAST_QUERY = """
           windSpeed
           windDirection
           condition
-          icon(format: SVG, theme: DARK)
+          %s
         }
       }
     }
@@ -67,7 +67,7 @@ FORECAST_QUERY_NO_ICON = """
       condition
     }
     forecast {
-      days(limit: 2) {
+      days(limit: 3) {
         hours {
           time
           temperature
@@ -91,28 +91,8 @@ PART_BUCKETS = (
 )
 # Хронологический порядок частей суток (для сортировки прогноза)
 PART_ORDER = {"night": 0, "morning": 1, "day": 2, "evening": 3}
-
-# Иконки состояний погоды (по коду условия)
-CONDITION_ICON: dict[str, str] = {
-    "CLEAR": "☀️",
-    "PARTLY_CLOUDY": "⛅",
-    "CLOUDY": "☁️",
-    "OVERCAST": "☁️",
-    "LIGHT_RAIN": "🌦️",
-    "RAIN": "🌧️",
-    "HEAVY_RAIN": "🌧️",
-    "SHOWERS": "⛈️",
-    "WET_SNOW": "🌨️",
-    "LIGHT_SNOW": "🌨️",
-    "SNOW": "❄️",
-    "SNOW_SHOWERS": "❄️",
-    "HAIL": "🌨️",
-    "THUNDERSTORM": "⛈️",
-    "THUNDERSTORM_WITH_RAIN": "⛈️",
-    "THUNDERSTORM_WITH_HAIL": "⛈️",
-    "FOG": "🌫️",
-    "MIST": "🌫️",
-}
+# Максимум частей суток в блоке прогноза (ближайшая отбрасывается)
+MAX_PARTS = 6
 
 CONDITION_RU: dict[str, str] = {
     "CLEAR": "ясно",
@@ -157,12 +137,6 @@ def _wind_dir(code: str | None) -> str:
     return WIND_DIR_RU.get(normalized, code)
 
 
-def _condition_icon(code: str | None) -> str:
-    if not code:
-        return ""
-    return CONDITION_ICON.get(code.upper().replace("-", "_"), "")
-
-
 def _to_local(dt: datetime) -> datetime:
     from .db import to_local_timestamp
     return to_local_timestamp(dt.astimezone(UTC).isoformat())
@@ -178,17 +152,17 @@ def _parse_response(raw: dict[str, Any], fetched_at: datetime | None = None) -> 
         "feels_like": now.get("feelsLike"),
         "condition": _condition(now.get("condition")),
         "icon_url": now.get("icon"),
-        "icon": _condition_icon(now.get("condition")),
         "wind_speed": now.get("windSpeed"),
         "wind_dir": _wind_dir(now.get("windDirection")),
     }
 
-    # Почасовой прогноз -> агрегация по частям суток (сегодня/завтра)
+    # Почасовой прогноз -> агрегация по частям суток (сегодня/завтра/п/завтра)
     hours: list[dict[str, Any]] = []
     for day in (point.get("forecast") or {}).get("days") or []:
         hours.extend(day.get("hours") or [])
 
     now_local = datetime.now(UTC)
+    today_local_date = _to_local(now_local).date()
     buckets: dict[tuple[str, str], dict[str, Any]] = {}
     for hour in hours:
         try:
@@ -200,7 +174,15 @@ def _parse_response(raw: dict[str, Any], fetched_at: datetime | None = None) -> 
         if t > now_local + timedelta(hours=48):
             continue
         t_local = _to_local(t)
-        date_label = "сегодня" if t_local.date() == _to_local(now_local).date() else "завтра"
+        day_offset = (t_local.date() - today_local_date).days
+        if day_offset == 0:
+            date_label = "сегодня"
+        elif day_offset == 1:
+            date_label = "завтра"
+        elif day_offset == 2:
+            date_label = "п/завтра"  # послезавтра — сокращённо, чтобы уместиться в колонку
+        else:
+            continue
         hour_num = t_local.hour
         for name, label, lo, hi in PART_BUCKETS:
             if lo <= hour_num <= hi:
@@ -245,9 +227,13 @@ def _parse_response(raw: dict[str, Any], fetched_at: datetime | None = None) -> 
             "temp_max": int(max(bucket["temps"])) if bucket["temps"] else None,
             "condition": _condition(dominant_condition),
             "icon_url": dominant_icon,
-            "icon": _condition_icon(dominant_condition),
             "wind_speed": round(bucket["wind"], 1) if bucket["wind"] else None,
         })
+
+    # Максимум 6 частей: ближайшую по времени убираем — для ближнего горизонта
+    # есть прогноз Замбретти, а строка должна оставаться в одну колонку сетки.
+    if len(parts) > MAX_PARTS:
+        parts = parts[-MAX_PARTS:]
 
     updated_local = None
     if fetched_at is not None:

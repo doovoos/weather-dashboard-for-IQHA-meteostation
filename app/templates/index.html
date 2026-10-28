@@ -90,7 +90,7 @@
         <div class="yw-fact">
           <div class="forecast-text">
             Сейчас {{ yandex_weather.fact.temp }}°
-            {% if yandex_weather.fact.icon_url %}<img class="yw-icon" src="{{ yandex_weather.fact.icon_url }}" alt="">{% else %}{{ yandex_weather.fact.icon }}{% endif %}
+            {% if yandex_weather.fact.icon_url %}<img class="yw-icon" src="{{ yandex_weather.fact.icon_url }}" alt="">{% endif %}
             · {{ yandex_weather.fact.condition }}
           </div>
           <div class="trend muted">
@@ -107,7 +107,7 @@
               {% if part.icon_url %}<img class="yw-icon-sm" src="{{ part.icon_url }}" alt="">{% endif %}
               {{ part.temp_min }}…{{ part.temp_max }}°
             </div>
-            <div class="small">{{ part.icon }} {{ part.condition }}</div>
+            <div class="small">{{ part.condition }}</div>
             {% if part.wind_speed %}<div class="small muted">ветер до {{ part.wind_speed }} м/с</div>{% endif %}
           </div>
           {% endfor %}
