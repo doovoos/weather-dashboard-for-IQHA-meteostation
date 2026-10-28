@@ -39,6 +39,14 @@
                      type="{{ 'number' if spec.type == 'int' else 'text' }}"
                      name="{{ spec.key }}"
                      value="{{ values[spec.key] }}">
+              {% if spec.key == 'YANDEX_WEATHER_API_KEY' %}
+              <div class="form-help" style="margin-top:6px;">
+                <form method="post" action="/admin/yandex-weather-refresh" style="display:inline;">
+                  <button type="submit" class="btn">⟳ Обновить прогноз сейчас</button>
+                </form>
+                <span class="small">— принудительный запрос к API мимо кэша (расходует дневной лимит).</span>
+              </div>
+              {% endif %}
               {% if spec.key == 'STATION_GROUND_ELEVATION_M' %}
               <button type="button" class="btn" id="elevation-lookup-btn" style="margin-top:6px;">
                 Определить по координатам
