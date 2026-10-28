@@ -47,7 +47,7 @@ FORECAST_QUERY = """
           windSpeed
           windDirection
           condition
-          %s
+          icon(format: SVG, theme: DARK)
         }
       }
     }
