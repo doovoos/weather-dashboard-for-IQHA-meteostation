@@ -352,13 +352,19 @@ def _save_error_state(message: str, conn: sqlite3.Connection | None) -> None:
     app_settings.set_value("YANDEX_WEATHER_LAST_ERROR_AT", datetime.now(UTC).isoformat(), conn=conn)
 
 
-def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None:
+def get_weather(
+    conn: sqlite3.Connection | None = None,
+    force: bool = False,
+) -> dict[str, Any] | None:
     """Погода Яндекс с кэшированием.
 
     Контракт возвращаемого значения:
     - None — не настроено (нет ключа или координат): блок скрывается целиком;
     - {"available": True, ...} — данные есть (из кэша или свежий запрос);
     - {"available": False, "detail": "..."} — настроено, но данных пока нет.
+
+    force=True — принудительный запрос мимо интервала обновления и паузы
+    ошибок (ручное обновление по кнопке; расходует лимит API).
 
     Ошибки сети не бросает.
     """
@@ -371,7 +377,7 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
         return None
 
     cached_raw, updated = _load_cache(conn)
-    if cached_raw is not None and updated is not None:
+    if not force and cached_raw is not None and updated is not None:
         age_minutes = (datetime.now(UTC) - updated).total_seconds() / 60.0
         if age_minutes < refresh_minutes:
             result = _parse_response(cached_raw, updated)
@@ -379,18 +385,20 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
             return result
 
     # Пауза между повторами после ошибки, чтобы не сжигать лимиты API
-    error_retry_minutes = max(5, app_settings.get_int("YANDEX_WEATHER_ERROR_RETRY_MINUTES", conn=conn) or 30)
-    last_error, last_error_at = _load_error_state(conn)
-    if last_error and last_error_at is not None:
-        since_error = (datetime.now(UTC) - last_error_at).total_seconds() / 60.0
-        if since_error < error_retry_minutes:
-            retry_in = int(error_retry_minutes - since_error)
-            detail = f"{last_error} (повтор через {retry_in} мин)"
-            if cached_raw is not None:
-                result = _parse_response(cached_raw, updated)
-                result["stale"] = True
-                return result
-            return {"available": False, "detail": detail}
+    # (принудительный запрос её игнорирует)
+    if not force:
+        error_retry_minutes = max(5, app_settings.get_int("YANDEX_WEATHER_ERROR_RETRY_MINUTES", conn=conn) or 30)
+        last_error, last_error_at = _load_error_state(conn)
+        if last_error and last_error_at is not None:
+            since_error = (datetime.now(UTC) - last_error_at).total_seconds() / 60.0
+            if since_error < error_retry_minutes:
+                retry_in = int(error_retry_minutes - since_error)
+                detail = f"{last_error} (повтор через {retry_in} мин)"
+                if cached_raw is not None:
+                    result = _parse_response(cached_raw, updated)
+                    result["stale"] = True
+                    return result
+                return {"available": False, "detail": detail}
 
     fetch_error: str | None = None
     try:
@@ -411,5 +419,6 @@ def get_weather(conn: sqlite3.Connection | None = None) -> dict[str, Any] | None
     if cached_raw is not None:
         result = _parse_response(cached_raw, updated)
         result["stale"] = True
+        result["stale_reason"] = fetch_error
         return result
     return {"available": False, "detail": fetch_error}

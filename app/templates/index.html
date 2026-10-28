@@ -83,7 +83,12 @@
     <div class="card forecast-card-yandex">
       <div class="card-head">
         <div class="card-title">Прогноз погоды</div>
-        <span class="card-code">Яндекс.Погода{% if yandex_weather.get('updated_local') %} · {{ yandex_weather.updated_local }}{% endif %}</span>
+        <span class="card-code">Яндекс.Погода{% if yandex_weather.get('updated_local') %} · {{ yandex_weather.updated_local }}{% endif %}{% if yandex_weather.get('stale') %} · устарело{% endif %}</span>
+        {% if admin_enabled %}
+        <form method="post" action="/admin/yandex-weather-refresh" style="margin:0;">
+          <button type="submit" class="icon-btn" title="Обновить прогноз Яндекс.Погоды сейчас" aria-label="Обновить прогноз">⟳</button>
+        </form>
+        {% endif %}
       </div>
       {% if yandex_weather.available %}
       <div class="forecast-body">
@@ -113,7 +118,7 @@
           {% endfor %}
         </div>
         {% endif %}
-        {% if yandex_weather.stale %}<div class="trend muted">Данные могли устареть — не удалось обновить.</div>{% endif %}
+        {% if yandex_weather.stale %}<div class="trend muted">Данные могли устареть — не удалось обновить{% if yandex_weather.get('stale_reason') %}: {{ yandex_weather.stale_reason }}{% endif %}.</div>{% endif %}
       </div>
       {% else %}
       <div class="forecast-body">

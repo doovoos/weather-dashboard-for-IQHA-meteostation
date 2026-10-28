@@ -145,12 +145,21 @@ def main() -> None:
     err = urllib.error.HTTPError(url="", code=403, msg="Forbidden", hdrs=None, fp=None)
     assert "403" in yandex_weather._describe_fetch_error(err)
 
-    # 6. Устаревший кэш + ошибка API -> кэш с флагом stale
+    # 6. Устаревший кэш + ошибка API -> кэш с флагом stale и причиной
     app_settings.set_value("YANDEX_WEATHER_UPDATED_AT",
                            (datetime.now(UTC) - timedelta(minutes=200)).isoformat(), conn=conn)
     yandex_weather._fetch = lambda *a, **k: (_ for _ in ()).throw(OSError("down"))
     got = yandex_weather.get_weather(conn=conn)
     assert got["available"] is True and got["stale"] is True
+    assert got.get("stale_reason") == "down"
+
+    # 6a. force=True игнорирует и свежий кэш, и паузу ошибок
+    yandex_weather._fetch = lambda *a, **k: _sample()
+    got = yandex_weather.get_weather(conn=conn, force=True)
+    assert got["available"] is True and got["stale"] is False
+    # Кэш перезаписан принудительным запросом — обычный вызов снова свеж
+    got2 = yandex_weather.get_weather(conn=conn)
+    assert got2["stale"] is False
 
     # 7. Переводы покрывают все условия
     for code in ["CLEAR", "PARTLY_CLOUDY", "CLOUDY", "OVERCAST", "LIGHT_RAIN", "RAIN",

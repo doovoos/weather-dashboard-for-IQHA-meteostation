@@ -332,6 +332,16 @@ def api_yandex_weather(conn: sqlite3.Connection = Depends(db_dependency)) -> dic
     return result
 
 
+@app.post("/admin/yandex-weather-refresh")
+def admin_yandex_weather_refresh(
+    _: str = Depends(require_admin),
+    conn: sqlite3.Connection = Depends(db_dependency),
+) -> RedirectResponse:
+    """Принудительное обновление прогноза Яндекс.Погоды (мимо кэша и паузы ошибок)."""
+    yandex_weather.get_weather(conn=conn, force=True)
+    return RedirectResponse("/", status_code=303)
+
+
 # ---------- Elevation lookup (Open-Meteo / Google Maps Elevation API) ----------
 
 def _elevation_from_open_meteo(lat: float, lon: float) -> float:
